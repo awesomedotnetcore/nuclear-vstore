@@ -246,8 +246,8 @@ namespace NuClear.VStore.ImageRendering
         {
             var corners = GetClippedRect(image.Width, image.Height, cornerRadius);
             image.Mutate(ctx => ctx.Fill(
-                             new GraphicsOptions { AlphaCompositionMode = PixelAlphaCompositionMode.Src, Antialias = false },
-                             Rgba32.Transparent,
+                             new GraphicsOptions(true) { AlphaCompositionMode = PixelAlphaCompositionMode.DestOut },
+                             Rgba32.LimeGreen,
                              corners));
         }
 
