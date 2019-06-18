@@ -9,6 +9,7 @@ using System.Runtime.Serialization;
 using System.Text;
 using System.Threading.Tasks;
 
+using CloningTool.Auth;
 using CloningTool.Json;
 
 using Microsoft.Extensions.Logging;
@@ -38,7 +39,7 @@ namespace CloningTool.RestClient
         private readonly HttpClient _authorizedHttpClient = new HttpClient();
         private readonly HttpClient _unauthorizedHttpClient = new HttpClient();
 
-        public OkapiClient(ILogger<OkapiClient> logger, Uri apiUri, string apiVersion, string apiToken)
+        public OkapiClient(ILogger<OkapiClient> logger, Uri apiUri, string apiVersion, IAuthService authService)
         {
             _apiUri = apiUri;
             var apiBase = new Uri(apiUri, $"api/{apiVersion}/");
@@ -49,7 +50,12 @@ namespace CloningTool.RestClient
             _remarkCategoryUri = new Uri(apiBase, "remarkCategory/");
             _amUri = new Uri(apiBase, "am/");
             _logger = logger;
-            _authorizedHttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiToken);
+            _logger.LogInformation("Getting token for an API '{url}'...", _apiUri);
+            var (tokenType, token) = authService.AuthenticateAsync()
+                                                .GetAwaiter()
+                                                .GetResult();
+
+            _authorizedHttpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(tokenType, token);
         }
 
         public void Dispose()

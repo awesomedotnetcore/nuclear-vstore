@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 
+using CloningTool.Auth;
 using CloningTool.CloneStrategies;
 using CloningTool.RestClient;
 
@@ -21,9 +22,10 @@ namespace CloningTool
     public class Program
     {
         private const string Source = "Source";
-        private const string Destination = "Dest";
+        private const string Destination = "Destination";
+        private const string OptionsParameterName = "options";
         private const string ApiUriParameterName = "apiUri";
-        private const string ApiTokenParameterName = "apiToken";
+        private const string AuthServiceParameterName = "authService";
         private const string ApiVersionParameterName = "apiVersion";
 
         private static IConfigurationRoot Configuration { get; set; }
@@ -92,9 +94,12 @@ namespace CloningTool
 
         private static IContainer Bootstrap()
         {
+            var aimConfigSection = Configuration.GetSection("Aim");
             var services = new ServiceCollection()
                 .AddOptions()
                 .Configure<CloningToolOptions>(Configuration.GetSection("CloningTool"))
+                .Configure<AimOptions>(Source, aimConfigSection.GetSection(Source))
+                .Configure<AimOptions>(Destination, aimConfigSection.GetSection(Destination))
                 .AddLogging();
 
             var builder = new ContainerBuilder();
@@ -103,30 +108,43 @@ namespace CloningTool
             builder.Register(x => x.Resolve<IOptions<CloningToolOptions>>().Value)
                    .SingleInstance();
 
+            builder.Register(x => x.Resolve<IOptions<AimOptions>>().Value)
+                   .SingleInstance();
+
+            builder.RegisterType<AimAuthService>()
+                   .Named<IAuthService>(Source)
+                   .WithParameter(
+                       (parameterInfo, context) => parameterInfo.Name == OptionsParameterName,
+                       (parameterInfo, context) => context.Resolve<IOptionsMonitor<AimOptions>>().Get(Source))
+                   .SingleInstance();
+
+            builder.RegisterType<AimAuthService>()
+                   .Named<IAuthService>(Destination)
+                   .WithParameter(
+                       (parameterInfo, context) => parameterInfo.Name == OptionsParameterName,
+                       (parameterInfo, context) => context.Resolve<IOptionsMonitor<AimOptions>>().Get(Destination))
+                   .SingleInstance();
+
             builder.RegisterType<OkapiClient>()
                    .As<IReadOnlyRestClientFacade>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.Name == ApiUriParameterName,
-                       (parameterInfo, context) => new Uri(Configuration.GetConnectionString(Source)))
+                   .WithParameter(ApiUriParameterName, new Uri(Configuration.GetConnectionString(Source)))
                    .WithParameter(
                        (parameterInfo, context) => parameterInfo.Name == ApiVersionParameterName,
                        (parameterInfo, context) => context.Resolve<CloningToolOptions>().ApiVersion)
                    .WithParameter(
-                       (parameterInfo, context) => parameterInfo.Name == ApiTokenParameterName,
-                       (parameterInfo, context) => context.Resolve<CloningToolOptions>().SourceApiToken)
+                       (parameterInfo, context) => parameterInfo.Name == AuthServiceParameterName,
+                       (parameterInfo, context) => context.ResolveNamed<IAuthService>(Source))
                    .SingleInstance();
 
             builder.RegisterType<OkapiClient>()
                    .As<IRestClientFacade>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.Name == ApiUriParameterName,
-                       (parameterInfo, context) => new Uri(Configuration.GetConnectionString(Destination)))
+                   .WithParameter(ApiUriParameterName, new Uri(Configuration.GetConnectionString(Destination)))
                    .WithParameter(
                        (parameterInfo, context) => parameterInfo.Name == ApiVersionParameterName,
                        (parameterInfo, context) => context.Resolve<CloningToolOptions>().ApiVersion)
                    .WithParameter(
-                       (parameterInfo, context) => parameterInfo.Name == ApiTokenParameterName,
-                       (parameterInfo, context) => context.Resolve<CloningToolOptions>().DestApiToken)
+                       (parameterInfo, context) => parameterInfo.Name == AuthServiceParameterName,
+                       (parameterInfo, context) => context.ResolveNamed<IAuthService>(Destination))
                    .SingleInstance();
 
             builder.RegisterType<CloneTemplates>()

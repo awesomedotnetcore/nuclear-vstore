@@ -22,10 +22,6 @@ namespace CloningTool
 
         public long? AdvertisementsTemplateId { get; set; }
 
-        public string SourceApiToken { get; set; }
-
-        public string DestApiToken { get; set; }
-
         public string ApiVersion { get; set; }
 
         public int InitialPingTries { get; set; }
