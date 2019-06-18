@@ -29,7 +29,7 @@ namespace NuClear.VStore.ImageRendering
             new Dictionary<string, IImageEncoder>
                 {
                     { JpegFormat.Instance.DefaultMimeType, new JpegEncoder { Quality = 100 } },
-                    { PngFormat.Instance.DefaultMimeType, new PngEncoder { CompressionLevel = 1, ColorType = PngColorType.RgbWithAlpha } },
+                    { PngFormat.Instance.DefaultMimeType, new PngEncoder { CompressionLevel = 1, ColorType = PngColorType.RgbWithAlpha, BitDepth = PngBitDepth.Bit8 } },
                     { GifFormat.Instance.DefaultMimeType, new GifEncoder() }
                 };
 
