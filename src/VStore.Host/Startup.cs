@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.AspNetCore.Routing;
@@ -44,12 +45,12 @@ using NuClear.VStore.S3;
 using NuClear.VStore.Sessions;
 using NuClear.VStore.Sessions.Fetch;
 using NuClear.VStore.Templates;
-
-using Prometheus.Client.AspNetCore;
+using Prometheus;
 
 using RedLockNet;
 
 using Swashbuckle.AspNetCore.Swagger;
+using Swashbuckle.AspNetCore.SwaggerUI;
 
 namespace NuClear.VStore.Host
 {
@@ -61,7 +62,7 @@ namespace NuClear.VStore.Host
 
         private static readonly JsonConverter[] CustomConverters =
             {
-                new StringEnumConverter { CamelCaseText = true },
+                new StringEnumConverter { NamingStrategy = new CamelCaseNamingStrategy() },
                 new Int64ToStringJsonConverter(),
                 new ElementDescriptorJsonConverter(),
                 new ElementDescriptorCollectionJsonConverter(),
@@ -97,11 +98,11 @@ namespace NuClear.VStore.Host
                         options =>
                             {
                                 var policy = new AuthorizationPolicyBuilder()
-                                    .RequireAuthenticatedUser()
-                                    .Build();
+                                             .RequireAuthenticatedUser()
+                                             .Build();
                                 options.Filters.Add(new AuthorizeFilter(policy));
                             })
-                    .AddVersionedApiExplorer()
+                    .SetCompatibilityVersion(CompatibilityVersion.Version_2_2)
                     .AddApiExplorer()
                     .AddAuthorization()
                     .AddCors()
@@ -118,6 +119,8 @@ namespace NuClear.VStore.Host
                                     settings.Converters.Insert(index, CustomConverters[index]);
                                 }
                             });
+
+            services.AddVersionedApiExplorer();
 
             services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     .AddJwtBearer(options =>
@@ -272,6 +275,8 @@ namespace NuClear.VStore.Host
                    .WithParameter(
                        (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
                        (parameterInfo, context) => context.Resolve<ICephS3Client>())
+                   .As<ITemplatesManagementService>()
+                   .PreserveExistingDefaults()
                    .SingleInstance();
             builder.RegisterType<ObjectsStorageReader>()
                    .WithParameter(
@@ -296,7 +301,7 @@ namespace NuClear.VStore.Host
         public void Configure(IApplicationBuilder app, IHostingEnvironment env)
         {
             app.UseMiddleware<HealthCheckMiddleware>();
-            app.UsePrometheusServer(options => options.UseDefaultCollectors = true);
+            app.UseMetricServer();
             app.UseMiddleware<CrosscuttingTraceIdentifierMiddleware>();
 
             if (!env.IsProduction())

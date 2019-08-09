@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-dotnet restore
-dotnet test tests/VStore.UnitTests -c release
+dotnet restore --runtime alpine.3.9-x64
+dotnet test tests/VStore.UnitTests/VStore.UnitTests.csproj --configuration Release
 rm -rf $(pwd)/publish/vstore
-dotnet publish src/VStore.Host/project.json -c release -r ubuntu.16.04-x64 -o $(pwd)/publish/vstore
+dotnet publish src/VStore.Host --configuration Release --runtime alpine.3.9-x64 --output $(pwd)/publish/vstore

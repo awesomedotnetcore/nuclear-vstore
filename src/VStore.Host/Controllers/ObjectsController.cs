@@ -43,8 +43,8 @@ namespace NuClear.VStore.Host.Controllers
         /// <param name="continuationToken">Token to continue reading list, should be empty on initial call</param>
         /// <returns>List of object descriptors</returns>
         [HttpGet]
-        [ProducesResponseType(typeof(IReadOnlyCollection<IdentifyableObjectRecord<long>>), 200)]
-        public async Task<IActionResult> List([FromHeader(Name = Http.HeaderNames.AmsContinuationToken)]string continuationToken)
+        [ProducesResponseType(200)]
+        public async Task<ActionResult<IReadOnlyCollection<IdentifyableObjectRecord<long>>>> List([FromHeader(Name = Http.HeaderNames.AmsContinuationToken)]string continuationToken)
         {
             var container = await _objectsStorageReader.List(continuationToken?.Trim('"'));
 
@@ -62,8 +62,8 @@ namespace NuClear.VStore.Host.Controllers
         /// <param name="ids">Object identifiers</param>
         /// <returns>List of object descriptors</returns>
         [HttpGet("specified")]
-        [ProducesResponseType(typeof(IReadOnlyCollection<ObjectMetadataRecord>), 200)]
-        public async Task<IActionResult> List(IReadOnlyCollection<long> ids)
+        [ProducesResponseType(200)]
+        public async Task<ActionResult<IReadOnlyCollection<ObjectMetadataRecord>>> List([FromQuery]IReadOnlyCollection<long> ids)
         {
             var records = await _objectsStorageReader.GetObjectMetadatas(ids);
             return Json(records);
@@ -77,9 +77,9 @@ namespace NuClear.VStore.Host.Controllers
         /// <returns>Template descriptor</returns>
         [HttpGet("{id:long}/{versionId}/template")]
         [ResponseCache(Duration = 120)]
-        [ProducesResponseType(typeof(IVersionedTemplateDescriptor), 200)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(404)]
-        public async Task<IActionResult> GetTemplateDescriptor(long id, string versionId)
+        public async Task<ActionResult<IVersionedTemplateDescriptor>> GetTemplateDescriptor(long id, string versionId)
         {
             try
             {
@@ -104,7 +104,7 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(typeof(IReadOnlyCollection<ObjectVersionMetadataRecord>), 200)]
         [ProducesResponseType(404)]
         [ProducesResponseType(503)]
-        public async Task<IActionResult> GetVersions(long id)
+        public async Task<ActionResult<IReadOnlyCollection<ObjectVersionRecord>>> GetVersions(long id)
         {
             try
             {
@@ -265,6 +265,7 @@ namespace NuClear.VStore.Host.Controllers
         /// Create new object
         /// </summary>
         /// <param name="id">Object identifier</param>
+        /// <param name="apiVersion">API version</param>
         /// <param name="author">Author identifier</param>
         /// <param name="authorLogin">Author login</param>
         /// <param name="authorName">Author name</param>
@@ -279,6 +280,7 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> Create(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorName)] string authorName,
@@ -299,10 +301,10 @@ namespace NuClear.VStore.Host.Controllers
             try
             {
                 var versionId = await _objectsManagementService.Create(id, new AuthorInfo(author, authorLogin, authorName), objectDescriptor);
-                var url = Url.AbsoluteAction("GetVersion", "Objects", new { id, versionId });
 
                 Response.Headers[HeaderNames.ETag] = $"\"{versionId}\"";
-                return Created(url, null);
+                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { nameof(versionId), versionId } };
+                return CreatedAtAction(nameof(GetVersion), routeValues, null);
             }
             catch (InvalidObjectException ex)
             {
@@ -315,7 +317,7 @@ namespace NuClear.VStore.Host.Controllers
             }
             catch (ObjectAlreadyExistsException)
             {
-                return Conflict("Object with the same id already exists");
+                return Conflict("Object with specified id already exists");
             }
             catch (LockAlreadyExistsException)
             {
@@ -332,15 +334,16 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Modify existing object
+        /// Modify existing object.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="ifMatch">Object version (should be latest version)</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="objectDescriptor">JSON with object descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="ifMatch">Object version (should be latest version).</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="objectDescriptor">JSON with object descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [HttpPatch("{id:long}")]
         [ProducesResponseType(204)]
         [ProducesResponseType(typeof(string), 400)]
@@ -350,6 +353,7 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> Modify(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = HeaderNames.IfMatch)] string ifMatch,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
@@ -380,7 +384,9 @@ namespace NuClear.VStore.Host.Controllers
                                           ifMatch.Trim('"'),
                                           new AuthorInfo(author, authorLogin, authorName),
                                           objectDescriptor);
-                var url = Url.AbsoluteAction("GetVersion", "Objects", new { id, versionId = latestVersionId });
+
+                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { "versionId", latestVersionId } };
+                var url = Url.AbsoluteAction("GetVersion", "Objects", routeValues);
 
                 Response.Headers[HeaderNames.ETag] = $"\"{latestVersionId}\"";
                 return NoContent(url);
@@ -412,16 +418,17 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Upgrade existing object to a newer template version
+        /// Upgrade existing object to a newer template version.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="ifMatch">Object version (should be latest version)</param>
-        /// <param name="modifiedElements">Template codes of actually modified elements (separated by comma)</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="objectDescriptor">JSON with object descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="ifMatch">Object version (should be latest version).</param>
+        /// <param name="modifiedElements">Template codes of actually modified elements (separated by comma).</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="objectDescriptor">JSON with object descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [HttpPut("{id:long}")]
         [ProducesResponseType(204)]
         [ProducesResponseType(typeof(string), 400)]
@@ -431,6 +438,7 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> Upgrade(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = HeaderNames.IfMatch)] string ifMatch,
             [FromHeader(Name = Http.HeaderNames.AmsModifiedElements)] string modifiedElements,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
@@ -485,7 +493,8 @@ namespace NuClear.VStore.Host.Controllers
                                           parsedModifiedElements,
                                           objectDescriptor);
 
-                var url = Url.AbsoluteAction("GetVersion", "Objects", new { id, versionId = latestVersionId });
+                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { "versionId", latestVersionId } };
+                var url = Url.AbsoluteAction("GetVersion", "Objects", routeValues);
 
                 Response.Headers[HeaderNames.ETag] = $"\"{latestVersionId}\"";
                 return NoContent(url);

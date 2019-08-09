@@ -34,8 +34,7 @@ using NuClear.VStore.Sessions;
 using NuClear.VStore.Sessions.ContentValidation.Errors;
 using NuClear.VStore.Sessions.Upload;
 using NuClear.VStore.Templates;
-
-using Prometheus.Client;
+using Prometheus;
 
 namespace NuClear.VStore.Objects
 {

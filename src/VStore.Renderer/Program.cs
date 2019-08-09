@@ -16,12 +16,12 @@ namespace NuClear.VStore.Renderer
     {
         public static async Task Main(string[] args)
         {
-            var webHost = BuildWebHost(args);
+            var webHost = CreateWebHostBuilder(args).Build();
             webHost.ConfigureThreadPool();
             await webHost.RunAsync();
         }
 
-        public static IWebHost BuildWebHost(string[] args) =>
+        public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
             WebHost.CreateDefaultBuilder(args)
                    .UseSockets(options => options.IOQueueCount = 0)
                    .ConfigureServices(services => services.AddAutofac())
@@ -31,7 +31,6 @@ namespace NuClear.VStore.Renderer
                                                       config.UseDefaultConfiguration(env.ContentRootPath, env.EnvironmentName);
                                                   })
                    .UseStartup<Startup>()
-                   .UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration))
-                   .Build();
+                   .UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration));
     }
 }

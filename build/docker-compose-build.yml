@@ -2,7 +2,7 @@ version: '2'
 
 services:
   vstore.host:
-    image: microsoft/aspnetcore-build:2.0.8-2.1.200
+    image: mcr.microsoft.com/dotnet/core/sdk:2.2.300-alpine3.9
     volumes:
       - .:/sln
     working_dir: /sln

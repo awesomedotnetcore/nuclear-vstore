@@ -26,9 +26,9 @@ namespace NuClear.VStore.Host.Controllers
     public class TemplatesController : VStoreController
     {
         private readonly ITemplatesStorageReader _templatesStorageReader;
-        private readonly TemplatesManagementService _templatesManagementService;
+        private readonly ITemplatesManagementService _templatesManagementService;
 
-        public TemplatesController(ITemplatesStorageReader templatesStorageReader, TemplatesManagementService templatesManagementService)
+        public TemplatesController(ITemplatesStorageReader templatesStorageReader, ITemplatesManagementService templatesManagementService)
         {
             _templatesStorageReader = templatesStorageReader;
             _templatesManagementService = templatesManagementService;
@@ -39,8 +39,7 @@ namespace NuClear.VStore.Host.Controllers
         /// </summary>
         /// <returns>List of template element descriptors</returns>
         [HttpGet("element-descriptors/available")]
-        [ProducesResponseType(typeof(IReadOnlyCollection<IElementDescriptor>), 200)]
-        public IActionResult GetAvailableElementDescriptors() => Json(_templatesManagementService.GetAvailableElementDescriptors());
+        public ActionResult<IReadOnlyCollection<IElementDescriptor>> GetAvailableElementDescriptors() => Json(_templatesManagementService.GetAvailableElementDescriptors());
 
         /// <summary>
         /// Get all templates
@@ -68,7 +67,7 @@ namespace NuClear.VStore.Host.Controllers
         /// <returns>List of specified template descriptors</returns>
         [HttpGet("specified")]
         [ProducesResponseType(typeof(IReadOnlyCollection<ObjectMetadataRecord>), 200)]
-        public async Task<IActionResult> List(IReadOnlyCollection<long> ids)
+        public async Task<IActionResult> List([FromQuery]IReadOnlyCollection<long> ids)
         {
             var records = await _templatesStorageReader.GetTemplateMetadatas(ids);
             return Json(records);
@@ -226,6 +225,7 @@ namespace NuClear.VStore.Host.Controllers
         /// Create new template (old API)
         /// </summary>
         /// <param name="id">Template identifier</param>
+        /// <param name="apiVersion">API version</param>
         /// <param name="author">Author identifier</param>
         /// <param name="authorLogin">Author login</param>
         /// <param name="authorName">Author name</param>
@@ -240,18 +240,20 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> CreateV10(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorName)] string authorName,
             [FromBody] ITemplateDescriptor templateDescriptor)
         {
-            return await CreateInternal(id, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJsonV10);
+            return await CreateInternal(id, author, authorLogin, authorName, apiVersion, templateDescriptor, GenerateTemplateErrorJsonV10);
         }
 
         /// <summary>
         /// Create new template
         /// </summary>
         /// <param name="id">Template identifier</param>
+        /// <param name="apiVersion">API version</param>
         /// <param name="author">Author identifier</param>
         /// <param name="authorLogin">Author login</param>
         /// <param name="authorName">Author name</param>
@@ -267,24 +269,26 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> Create(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorName)] string authorName,
             [FromBody] ITemplateDescriptor templateDescriptor)
         {
-            return await CreateInternal(id, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJson);
+            return await CreateInternal(id, author, authorLogin, authorName, apiVersion, templateDescriptor, GenerateTemplateErrorJson);
         }
 
         /// <summary>
-        /// Modify existing template (old API)
+        /// Modify existing template (old API).
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="ifMatch">Version of template to be modified (should be last version)</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="templateDescriptor">JSON with template descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="ifMatch">Version of template to be modified (should be last version).</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="templateDescriptor">JSON with template descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [Obsolete, MapToApiVersion("1.0")]
         [HttpPut("{id:long}")]
         [ProducesResponseType(204)]
@@ -295,25 +299,27 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> ModifyV10(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = HeaderNames.IfMatch)] string ifMatch,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorName)] string authorName,
             [FromBody] ITemplateDescriptor templateDescriptor)
         {
-            return await ModifyInternal(id, ifMatch, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJsonV10);
+            return await ModifyInternal(id, ifMatch, apiVersion, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJsonV10);
         }
 
         /// <summary>
-        /// Modify existing template
+        /// Modify existing template.
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="ifMatch">Version of template to be modified (should be last version)</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="templateDescriptor">JSON with template descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="ifMatch">Version of template to be modified (should be last version).</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="templateDescriptor">JSON with template descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [MapToApiVersion("1.1")]
         [MapToApiVersion("1.2")]
         [HttpPut("{id:long}")]
@@ -325,14 +331,13 @@ namespace NuClear.VStore.Host.Controllers
         [ProducesResponseType(423)]
         public async Task<IActionResult> Modify(
             long id,
+            ApiVersion apiVersion,
             [FromHeader(Name = HeaderNames.IfMatch)] string ifMatch,
             [FromHeader(Name = Http.HeaderNames.AmsAuthor)] string author,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorLogin)] string authorLogin,
             [FromHeader(Name = Http.HeaderNames.AmsAuthorName)] string authorName,
             [FromBody] ITemplateDescriptor templateDescriptor)
-        {
-            return await ModifyInternal(id, ifMatch, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJson);
-        }
+            => await ModifyInternal(id, ifMatch, apiVersion, author, authorLogin, authorName, templateDescriptor, GenerateTemplateErrorJson);
 
         private static JToken GenerateTemplateErrorJsonV10(TemplateValidationException ex) => new JArray { ex.SerializeToJsonV10() };
 
@@ -348,6 +353,7 @@ namespace NuClear.VStore.Host.Controllers
             string author,
             string authorLogin,
             string authorName,
+            ApiVersion apiVersion,
             ITemplateDescriptor templateDescriptor,
             Func<TemplateValidationException, JToken> errorGenerator)
         {
@@ -366,10 +372,10 @@ namespace NuClear.VStore.Host.Controllers
             try
             {
                 var versionId = await _templatesManagementService.CreateTemplate(id, new AuthorInfo(author, authorLogin, authorName), templateDescriptor);
-                var url = Url.AbsoluteAction("GetVersion", "Templates", new { id, versionId });
 
                 Response.Headers[HeaderNames.ETag] = $"\"{versionId}\"";
-                return Created(url, null);
+                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { nameof(versionId), versionId } };
+                return CreatedAtAction(nameof(GetVersion), routeValues, null);
             }
             catch (ObjectAlreadyExistsException)
             {
@@ -388,6 +394,7 @@ namespace NuClear.VStore.Host.Controllers
         private async Task<IActionResult> ModifyInternal(
             long id,
             string ifMatch,
+            ApiVersion apiVersion,
             string author,
             string authorLogin,
             string authorName,
@@ -418,7 +425,9 @@ namespace NuClear.VStore.Host.Controllers
                                           ifMatch.Trim('"'),
                                           new AuthorInfo(author, authorLogin, authorName),
                                           templateDescriptor);
-                var url = Url.AbsoluteAction("GetVersion", "Templates", new { id, versionId = latestVersionId });
+
+                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { "versionId", latestVersionId } };
+                var url = Url.AbsoluteAction("GetVersion", "Templates", routeValues);
 
                 Response.Headers[HeaderNames.ETag] = $"\"{latestVersionId}\"";
                 return NoContent(url);

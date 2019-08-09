@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 
 using Confluent.Kafka;
-using Confluent.Kafka.Serialization;
 
 using Microsoft.Extensions.Logging;
 
@@ -13,82 +10,57 @@ namespace NuClear.VStore.Kafka
 {
     public abstract class ConsumerWrapper : IDisposable
     {
-        private readonly ILogger _logger;
-
-        protected ConsumerWrapper(ILogger logger, KafkaOptions kafkaOptions, string groupId = null)
+        protected ConsumerWrapper(ILogger logger, KafkaOptions kafkaOptions, bool enablePartitionEof, string groupId = null)
         {
-            _logger = logger;
-            Consumer = new Consumer<string, string>(
-                CreateConsumerConfig(kafkaOptions, groupId),
-                new StringDeserializer(Encoding.UTF8),
-                new StringDeserializer(Encoding.UTF8));
-
-            Consumer.OnLog += OnLog;
-            Consumer.OnError += OnError;
-            Consumer.OnStatistics += OnStatistics;
-            Consumer.OnConsumeError += OnConsumeError;
+            Logger = logger;
+            var config = CreateConsumerConfig(kafkaOptions, enablePartitionEof, groupId);
+            Consumer = new ConsumerBuilder<string, string>(config)
+                       .SetKeyDeserializer(Deserializers.Utf8)
+                       .SetValueDeserializer(Deserializers.Utf8)
+                       .SetLogHandler(OnLog)
+                       .SetErrorHandler(OnError)
+                       .SetStatisticsHandler(OnStatistics)
+                       .Build();
         }
 
-        protected Consumer<string, string> Consumer { get; }
+        protected IConsumer<string, string> Consumer { get; }
 
-        public virtual void Dispose()
-        {
-            Consumer.OnLog -= OnLog;
-            Consumer.OnError -= OnError;
-            Consumer.OnStatistics -= OnStatistics;
-            Consumer.OnConsumeError -= OnConsumeError;
-            Consumer.Dispose();
-        }
+        protected ILogger Logger { get; }
 
-        private static Dictionary<string, object> CreateConsumerConfig(KafkaOptions kafkaOptions, string groupId)
-            => new Dictionary<string, object>
+        public virtual void Dispose() => Consumer?.Dispose();
+
+        private static ConsumerConfig CreateConsumerConfig(KafkaOptions kafkaOptions, bool enablePartitionEof, string groupId)
+            => new ConsumerConfig
                 {
-                    // https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
-                    { "bootstrap.servers", kafkaOptions.BrokerEndpoints },
-                    { "api.version.request", true },
-                    { "group.id", !string.IsNullOrEmpty(groupId) ? groupId : Guid.NewGuid().ToString() },
-                    { "enable.auto.commit", kafkaOptions.Consumer.EnableAutoCommit },
-                    { "fetch.wait.max.ms", kafkaOptions.Consumer.FetchWaitMaxMs },
-                    { "fetch.error.backoff.ms", kafkaOptions.Consumer.FetchErrorBackoffMs },
-                    { "fetch.message.max.bytes", kafkaOptions.Consumer.FetchMessageMaxBytes },
-                    { "queued.min.messages", kafkaOptions.Consumer.QueuedMinMessages },
+                    BootstrapServers = kafkaOptions.BrokerEndpoints,
+                    ApiVersionRequest = true,
+                    GroupId = !string.IsNullOrEmpty(groupId) ? groupId : Guid.NewGuid().ToString(),
+                    EnableAutoCommit = kafkaOptions.Consumer.EnableAutoCommit,
+                    FetchWaitMaxMs = kafkaOptions.Consumer.FetchWaitMaxMs,
+                    FetchErrorBackoffMs = kafkaOptions.Consumer.FetchErrorBackoffMs,
+                    FetchMaxBytes = kafkaOptions.Consumer.FetchMessageMaxBytes,
+                    MessageMaxBytes = kafkaOptions.Consumer.MessageMaxBytes,
+                    QueuedMinMessages = kafkaOptions.Consumer.QueuedMinMessages,
+                    AutoOffsetReset = AutoOffsetReset.Earliest,
+                    EnablePartitionEof = enablePartitionEof,
 #if DEBUG
-                    { "debug", "msg" },
-                    { "socket.blocking.max.ms", 1 }, // https://github.com/edenhill/librdkafka/wiki/How-to-decrease-message-latency
+                    Debug = "consumer,cgrp,topic,fetch"
 #else
-                    { "log.connection.close", false },
+                    LogConnectionClose = false
 #endif
-                    {
-                            "default.topic.config",
-                            new Dictionary<string, object>
-                                {
-                                    { "auto.offset.reset", "beginning" }
-                                }
-                        }
-                    };
+                };
 
-        private void OnLog(object sender, LogMessage logMessage)
-            => _logger.LogDebug(
+        private void OnLog(IConsumer<string, string> sender, LogMessage logMessage)
+            => Logger.LogDebug(
                 "Consuming from Kafka. Client: '{kafkaClient}', syslog level: '{kafkaLogLevel}', message: '{kafkaLogMessage}'.",
                 logMessage.Name,
                 logMessage.Level,
                 logMessage.Message);
 
-        private void OnError(object sender, Error error)
-            => _logger.LogInformation("Consuming from Kafka. Client error: '{kafkaError}'. No action required.", error);
+        private void OnError(IConsumer<string, string> sender, Error error)
+            => Logger.LogInformation("Consuming from Kafka. Client error: '{kafkaError}'. No action required.", error);
 
-        private void OnStatistics(object sender, string json)
-            => _logger.LogDebug("Consuming from Kafka. Statistics: '{kafkaStatistics}'.", json);
-
-        private void OnConsumeError(object sender, Message error)
-        {
-            _logger.LogError(
-                "Error consuming from Kafka. Topic/partition/offset: '{kafkaTopic}/{kafkaPartition}/{kafkaOffset}'. Message: '{kafkaError}'.",
-                error.Topic,
-                error.Partition,
-                error.Offset,
-                error.Error);
-            throw new EventProcessingException(error.Error.ToString());
-        }
+        private void OnStatistics(IConsumer<string, string> sender, string json)
+            => Logger.LogDebug("Consuming from Kafka. Statistics: '{kafkaStatistics}'.", json);
     }
 }

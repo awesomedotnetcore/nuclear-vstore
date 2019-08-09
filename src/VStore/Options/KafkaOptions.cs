@@ -18,6 +18,7 @@
             public int FetchErrorBackoffMs { get; set; }
             public int FetchMessageMaxBytes { get; set; }
             public int QueuedMinMessages { get; set; }
+            public int MessageMaxBytes { get; set; }
         }
 
         public sealed class ProducerOptions

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 
 using Confluent.Kafka;
 
@@ -17,45 +16,35 @@ namespace NuClear.VStore.Kafka
         private const int DefaultPartition = 0;
 
         public EventReader(ILogger logger, KafkaOptions kafkaOptions)
-            : base(logger, kafkaOptions)
+            : base(logger, kafkaOptions, true)
         {
         }
 
-        public async Task<IReadOnlyCollection<KafkaEvent<TSourceEvent>>> ReadAsync<TSourceEvent>(
+        public IReadOnlyCollection<KafkaEvent<TSourceEvent>> Read<TSourceEvent>(
             string topic, DateTime dateToStart)
             where TSourceEvent : IEvent
         {
             var events = new List<KafkaEvent<TSourceEvent>>();
-            var done = false;
-
-            void OnMessage(object sender, Message<string, string> message)
-            {
-                var @event = Event.Deserialize<TSourceEvent>(message.Value);
-                events.Add(new KafkaEvent<TSourceEvent>(@event, message.TopicPartitionOffset, message.Timestamp));
-            }
-
-            void OnPartitionEof(object sender, TopicPartitionOffset offset) => done = true;
-
-            Consumer.OnPartitionEOF += OnPartitionEof;
-            Consumer.OnMessage += OnMessage;
 
             try
             {
                 var offsets = GetOffsets(topic, dateToStart);
                 Consumer.Assign(offsets);
-                await Task.Run(() =>
-                                   {
-                                       while (!done)
-                                       {
-                                           Consumer.Poll(TimeSpan.FromMilliseconds(100));
-                                       }
-                                   })
-                          .ConfigureAwait(false);
+                while (true)
+                {
+                    var message = Consumer.Consume(TimeSpan.FromMilliseconds(100));
+                    if (message.IsPartitionEOF)
+                    {
+                        break;
+                    }
+
+                    var @event = Event.Deserialize<TSourceEvent>(message.Value);
+                    events.Add(new KafkaEvent<TSourceEvent>(@event, message.TopicPartitionOffset, message.Timestamp));
+                }
             }
-            finally
+            catch (ConsumeException ex)
             {
-                Consumer.OnMessage -= OnMessage;
-                Consumer.OnPartitionEOF -= OnPartitionEof;
+                Logger.LogError(ex, "Consuming error from topic '{topic}'. Error: {error}", topic, ex.Error);
             }
 
             return events;
@@ -66,7 +55,8 @@ namespace NuClear.VStore.Kafka
             try
             {
                 var timestampToSearch = new TopicPartitionTimestamp(topic, DefaultPartition, new Timestamp(date, TimestampType.CreateTime));
-                return Consumer.OffsetsForTimes(new[] { timestampToSearch }, TimeSpan.FromSeconds(10)).Select(x => (TopicPartitionOffset)x);
+                return Consumer.OffsetsForTimes(new[] { timestampToSearch }, TimeSpan.FromSeconds(10))
+                               .Select(x => x);
             }
             catch (KafkaException ex)
             {

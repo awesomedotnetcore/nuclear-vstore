@@ -19,20 +19,18 @@ namespace NuClear.VStore.Host
 {
     public class Program
     {
-        private const int LibuvEventLoopCount = 8;
-
         public static async Task Main(string[] args)
         {
-            var webHost = BuildWebHost(args);
+            var webHost = CreateWebHostBuilder(args).Build();
             webHost.ConfigureThreadPool();
 
             ConfigureAwsLogging();
             await webHost.RunAsync();
         }
 
-        private static IWebHost BuildWebHost(string[] args) =>
+        private static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
             WebHost.CreateDefaultBuilder(args)
-                   .UseLibuv(options => options.ThreadCount = LibuvEventLoopCount)
+                   .UseSockets(options => options.IOQueueCount = 0)
                    .ConfigureServices(services => services.AddAutofac())
                    .ConfigureAppConfiguration((hostingContext, config) =>
                                                   {
@@ -40,8 +38,7 @@ namespace NuClear.VStore.Host
                                                       config.UseDefaultConfiguration(env.ContentRootPath, env.EnvironmentName);
                                                   })
                    .UseStartup<Startup>()
-                   .UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration))
-                   .Build();
+                   .UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration));
 
         private static void ConfigureAwsLogging()
         {

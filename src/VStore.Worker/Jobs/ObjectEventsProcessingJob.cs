@@ -135,7 +135,7 @@ namespace NuClear.VStore.Worker.Jobs
                                  }
                              });
 
-        private static PolicyWrap<IReadOnlyCollection<ObjectVersionRecord>> CreateGetObjectVersionsResiliencePolicy()
+        private static AsyncPolicyWrap<IReadOnlyCollection<ObjectVersionRecord>> CreateGetObjectVersionsResiliencePolicy()
         {
             var fallback =
                 Policy<IReadOnlyCollection<ObjectVersionRecord>>
@@ -199,7 +199,7 @@ namespace NuClear.VStore.Worker.Jobs
                         _objectVersionsTopic);
                 }
 
-                await _versionEventReceiver.CommitAsync(@event);
+                _versionEventReceiver.Commit(@event);
             }
 
             var observable = _versionEventReceiver.Subscribe<ObjectVersionCreatingEvent>(cancellationToken);
@@ -256,6 +256,7 @@ namespace NuClear.VStore.Worker.Jobs
                         await _eventSender.SendAsync(
                             _binariesUsingsTopic,
                             new BinaryReferencedEvent(objectId, record.VersionId, fileInfo.TemplateCode, fileInfo.FileKey, record.LastModified));
+
                         _logger.LogInformation(
                             "{taskName}: Event for binary reference {fileKey} for element with templateCode = '{templateCode}' " +
                             "for object id = '{objectId}' and versionId = {versionId} sent to {topic}.",
@@ -268,7 +269,7 @@ namespace NuClear.VStore.Worker.Jobs
                     }
                 }
 
-                await _binariesEventReceiver.CommitAsync(@event);
+                _binariesEventReceiver.Commit(@event);
             }
 
             var observable = _binariesEventReceiver.Subscribe<ObjectVersionCreatingEvent>(cancellationToken);

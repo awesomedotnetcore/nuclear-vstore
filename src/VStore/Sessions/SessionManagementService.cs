@@ -29,7 +29,7 @@ using NuClear.VStore.Templates;
 
 using Polly.Timeout;
 
-using Prometheus.Client;
+using Prometheus;
 
 namespace NuClear.VStore.Sessions
 {

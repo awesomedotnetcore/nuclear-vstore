@@ -1,4 +1,4 @@
-FROM docker-hub.2gis.ru/microsoft/dotnet:2.0.9-runtime-deps
+FROM docker-hub.2gis.ru/dotnet/core/runtime-deps:2.2.5-alpine3.9
 
 WORKDIR /app
 

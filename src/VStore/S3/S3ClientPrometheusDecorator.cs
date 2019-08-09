@@ -10,7 +10,7 @@ using Amazon.S3.Model;
 
 using NuClear.VStore.Prometheus;
 
-using Prometheus.Client;
+using Prometheus;
 
 namespace NuClear.VStore.S3
 {

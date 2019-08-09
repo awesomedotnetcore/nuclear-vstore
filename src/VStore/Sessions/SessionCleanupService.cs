@@ -12,8 +12,7 @@ using NuClear.VStore.Json;
 using NuClear.VStore.Options;
 using NuClear.VStore.Prometheus;
 using NuClear.VStore.S3;
-
-using Prometheus.Client;
+using Prometheus;
 
 namespace NuClear.VStore.Sessions
 {

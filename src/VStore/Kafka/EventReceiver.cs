@@ -19,34 +19,37 @@ namespace NuClear.VStore.Kafka
 
         private bool _streamingStarted;
 
+        private event EventHandler<ConsumeResult<string, string>> OnMessage;
+
         public EventReceiver(ILogger logger, KafkaOptions kafkaOptions, string groupId, IEnumerable<string> topics)
-            : base(logger, kafkaOptions, groupId)
+            : base(logger, kafkaOptions, false, groupId)
         {
             _topics = topics;
         }
 
-        public IObservable<KafkaEvent<TSourceEvent>> Subscribe<TSourceEvent>(CancellationToken cancellationToken) where TSourceEvent : IEvent
+        public IObservable<KafkaEvent<TSourceEvent>> Subscribe<TSourceEvent>(CancellationToken cancellationToken)
+            where TSourceEvent : IEvent
         {
             if (_streamingStarted)
             {
-                throw new InvalidOperationException("Streaming already started. Please dispose the previous obvservable before getting the new one.");
+                throw new InvalidOperationException("Streaming already started. Please dispose the previous observable before getting the new one.");
             }
 
             var pollCancellationTokenSource = new CancellationTokenSource();
             var registration = cancellationToken.Register(() => pollCancellationTokenSource.Cancel());
 
-            var onMessage = Observable.FromEventPattern<Message<string, string>>(
+            var onMessage = Observable.FromEventPattern<ConsumeResult<string, string>>(
                                           x =>
                                               {
-                                                  Consumer.OnMessage += x;
+                                                  OnMessage += x;
                                                   Consumer.Subscribe(_topics);
                                               },
                                           x =>
                                               {
+                                                  OnMessage -= x;
                                                   pollCancellationTokenSource.Cancel();
                                                   registration.Dispose();
                                                   Consumer.Unsubscribe();
-                                                  Consumer.OnMessage -= x;
                                                   _streamingStarted = false;
                                               })
                                       .Select(x => x.EventArgs)
@@ -60,7 +63,8 @@ namespace NuClear.VStore.Kafka
                         {
                             while (!pollCancellationTokenSource.IsCancellationRequested)
                             {
-                                Consumer.Poll(TimeSpan.FromMilliseconds(100));
+                                var cr = Consumer.Consume(pollCancellationTokenSource.Token);
+                                OnMessage?.Invoke(Consumer, cr);
                             }
                         },
                     pollCancellationTokenSource.Token,
@@ -73,10 +77,10 @@ namespace NuClear.VStore.Kafka
             return onMessage;
         }
 
-        public async Task CommitAsync<TSourceEvent>(KafkaEvent<TSourceEvent> @event) where TSourceEvent : IEvent
+        public void Commit<TSourceEvent>(KafkaEvent<TSourceEvent> @event) where TSourceEvent : IEvent
         {
             var offsetsToCommit = new TopicPartitionOffset(@event.TopicPartitionOffset.TopicPartition, @event.TopicPartitionOffset.Offset + 1);
-            await Consumer.CommitAsync(new[] { offsetsToCommit });
+            Consumer.Commit(new[] { offsetsToCommit });
         }
     }
 }

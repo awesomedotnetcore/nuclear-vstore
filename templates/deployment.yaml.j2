@@ -105,27 +105,6 @@ spec:
           value: {{ session_events_topic }}
         - name: VSTORE_Kafka__BinariesReferencesTopic
           value: {{ binaries_references_topic }}
-      - name: vstore-locks-collector
-        image: {{ vstore_worker_image_path }}:{{ image_version }}
-        command: ["/app/VStore.Worker", "collect", "locks"]
-        resources:
-          limits:
-            cpu: {{ worker_app_limits_cpu }}
-            memory: {{ worker_app_limits_memory }}
-          requests:
-            cpu: {{ worker_app_requests_cpu }}
-            memory: {{ worker_app_requests_memory }}
-        env:
-        - name: VSTORE_ENVIRONMENT
-          value: {{ vstore_env }}
-        - name: AWS_ACCESS_KEY_ID
-          value: {{ ceph_key_id }}
-        - name: AWS_SECRET_ACCESS_KEY
-          value: {{ ceph_access_key }}
-        - name: VSTORE_AWS__ServiceURL
-          value: {{ ceph_rgw_url }}
-        - name: VSTORE_Ceph__Locks__BucketName
-          value: {{ locks_bucket_name }}
     - name: vstore-binaries-collector
       image: {{ vstore_worker_image_path }}:{{ image_version }}
       command: ["/app/VStore.Worker", "collect", "binaries"]

@@ -49,13 +49,13 @@ namespace NuClear.VStore.Renderer.Controllers
         /// <returns>File with preview</returns>
         [MapToApiVersion("2.0")]
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/image_{width:int}x{height:int}.png")]
-        [ProducesResponseType(typeof(byte[]), 200)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(302)]
         [ProducesResponseType(typeof(string), 400)]
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(object), 422)]
         [ProducesResponseType(429)]
-        public async Task<IActionResult> GetCompositeImagePreview(long id, string versionId, int templateCode, int width, int height)
+        public async Task<ActionResult<byte[]>> GetCompositeImagePreview(long id, string versionId, int templateCode, int width, int height)
         {
             if (width < 1 || height < 1)
             {
@@ -106,13 +106,13 @@ namespace NuClear.VStore.Renderer.Controllers
         /// <returns>File with preview</returns>
         [Obsolete, MapToApiVersion("1.0")]
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/image_{width:int}x{height:int}.png")]
-        [ProducesResponseType(typeof(byte[]), 200)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(302)]
         [ProducesResponseType(typeof(string), 400)]
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(object), 422)]
         [ProducesResponseType(429)]
-        public async Task<IActionResult> GetCompositeImagePreviewV10(long id, string versionId, int templateCode, int width, int height)
+        public async Task<ActionResult<byte[]>> GetCompositeImagePreviewV10(long id, string versionId, int templateCode, int width, int height)
         {
             if (width < 1 || height < 1)
             {
@@ -162,12 +162,12 @@ namespace NuClear.VStore.Renderer.Controllers
         /// <param name="height">Required height</param>
         /// <returns>File with preview</returns>
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/{width:int}x{height:int}")]
-        [ProducesResponseType(typeof(byte[]), 200)]
+        [ProducesResponseType(200)]
         [ProducesResponseType(typeof(string), 400)]
         [ProducesResponseType(404)]
         [ProducesResponseType(typeof(object), 422)]
         [ProducesResponseType(429)]
-        public async Task<IActionResult> GetScaledImagePreview(long id, string versionId, int templateCode, int width, int height)
+        public async Task<ActionResult<byte[]>> GetScaledImagePreview(long id, string versionId, int templateCode, int width, int height)
         {
             if (width < 1 || height < 1)
             {

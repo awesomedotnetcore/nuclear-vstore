@@ -9,11 +9,12 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Newtonsoft.Json.Linq;
 
 using NuClear.VStore.Http.Core.ActionResults;
-
+using ConflictResult = NuClear.VStore.Http.Core.ActionResults.ConflictResult;
 using NoContentResult = NuClear.VStore.Http.Core.ActionResults.NoContentResult;
 
 namespace NuClear.VStore.Http.Core.Controllers
 {
+    [ApiController]
     public abstract class VStoreController : ControllerBase
     {
         [NonAction]

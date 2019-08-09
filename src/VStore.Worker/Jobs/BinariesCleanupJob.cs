@@ -124,7 +124,7 @@ namespace NuClear.VStore.Worker.Jobs
         {
             return Policy<List<KafkaEvent<BinaryReferencedEvent>>>
                 .HandleResult(result => result.Count == 0)
-                .WaitAndRetryForeverAsync(
+                .WaitAndRetryForever(
                     attempt => delay,
                     (current, duration) => logger.LogWarning(
                         "There are no events of type {eventType} in time interval from {dateToStart:u} till now. " +
@@ -176,14 +176,14 @@ namespace NuClear.VStore.Worker.Jobs
                     dateToStart);
 
                 var referenceEventsPolicy = CreateReferenceEventsReadingPolicy(_logger, dateToStart, delay);
-                var referenceEvents = await referenceEventsPolicy.ExecuteAsync(
-                                          async () =>
-                                              {
-                                                  var result = await _referencesEventReader.ReadAsync<BinaryReferencedEvent>(
-                                                                   _binariesReferencesTopicName,
-                                                                   dateToStart);
-                                                  return new List<KafkaEvent<BinaryReferencedEvent>>(result);
-                                              });
+                var referenceEvents = referenceEventsPolicy.Execute(() =>
+                                                                        {
+                                                                            var result = _referencesEventReader.Read<BinaryReferencedEvent>(
+                                                                                _binariesReferencesTopicName,
+                                                                                dateToStart);
+
+                                                                            return new List<KafkaEvent<BinaryReferencedEvent>>(result);
+                                                                        });
 
                 _logger.LogInformation(
                     "'{referenceEventsCount}' events of type {eventType} read in time interval from {dateToStart:u} till now.",
@@ -204,7 +204,7 @@ namespace NuClear.VStore.Worker.Jobs
                         delay);
                     await Task.Delay(delay, cancellationToken);
 
-                    var additional = await _referencesEventReader.ReadAsync<BinaryReferencedEvent>(_binariesReferencesTopicName, periodEnd.Subtract(SafetyPeriod));
+                    var additional = _referencesEventReader.Read<BinaryReferencedEvent>(_binariesReferencesTopicName, periodEnd.Subtract(SafetyPeriod));
                     referenceEvents.AddRange(additional);
                     var (extendedExpired, extendedPeriodEnd) = EvaluateExpiredSessions(sessionCreatingEvents, referenceEvents);
 
@@ -220,11 +220,11 @@ namespace NuClear.VStore.Worker.Jobs
                     sessionsWithReferences.Count,
                     dateToStart);
 
-                var archievedSessionsCount = await ArchieveUnreferencedBinaries(expiredSessionEvents, sessionsWithReferences, cancellationToken);
+                var archivedSessionsCount = await ArchiveUnreferencedBinaries(expiredSessionEvents, sessionsWithReferences, cancellationToken);
                 _logger.LogInformation(
-                    "Total '{totalSessionsCount}' sessions has been processed, '{archievedSessionsCount}' were archived.",
+                    "Total '{totalSessionsCount}' sessions has been processed, '{archivedSessionsCount}' were archived.",
                     sessionCreatingEvents.Count,
-                    archievedSessionsCount);
+                    archivedSessionsCount);
             }
 
             var observable = _sessionsEventReceiver.Subscribe<SessionCreatingEvent>(cancellationToken);
@@ -238,7 +238,7 @@ namespace NuClear.VStore.Worker.Jobs
                 .Subscribe();
         }
 
-        private async Task<int> ArchieveUnreferencedBinaries(
+        private async Task<int> ArchiveUnreferencedBinaries(
             IEnumerable<KafkaEvent<SessionCreatingEvent>> expiredSessionEvents,
             ICollection<Guid> sessionsWithReferences,
             CancellationToken cancellationToken)
@@ -273,7 +273,7 @@ namespace NuClear.VStore.Worker.Jobs
                     _logger.LogWarning("Session '{sessionId}' not found.", sessionId);
                 }
 
-                await _sessionsEventReceiver.CommitAsync(expiredSessionEvent);
+                _sessionsEventReceiver.Commit(expiredSessionEvent);
                 ++count;
             }
 

@@ -28,12 +28,12 @@ using NuClear.VStore.Options;
 using NuClear.VStore.Prometheus;
 using NuClear.VStore.S3;
 using NuClear.VStore.Templates;
-
-using Prometheus.Client.AspNetCore;
+using Prometheus;
 
 using RedLockNet;
 
 using Swashbuckle.AspNetCore.Swagger;
+using Swashbuckle.AspNetCore.SwaggerUI;
 
 namespace NuClear.VStore.Renderer
 {
@@ -59,18 +59,20 @@ namespace NuClear.VStore.Renderer
                 .Configure<ThrottlingOptions>(_configuration.GetSection("Throttling"));
 
             services.AddMvcCore()
-                    .AddVersionedApiExplorer()
+                    .SetCompatibilityVersion(CompatibilityVersion.Version_2_2)
                     .AddApiExplorer()
                     .AddCors()
                     .AddJsonFormatters();
 
-            services.AddApiVersioning(
-                options =>
-                    {
-                        options.ReportApiVersions = true;
-                        options.DefaultApiVersion = new ApiVersion(1, 0);
-                        options.AssumeDefaultVersionWhenUnspecified = true;
-                    });
+            services.AddVersionedApiExplorer()
+                    .AddApiVersioning(
+                        options =>
+                            {
+                                options.ReportApiVersions = true;
+                                options.DefaultApiVersion = new ApiVersion(1, 0);
+                                options.AssumeDefaultVersionWhenUnspecified = true;
+                            });
+
             services.AddMemoryCache();
             services.AddSwaggerGen(
                 options =>
@@ -187,7 +189,7 @@ namespace NuClear.VStore.Renderer
         public void Configure(IApplicationBuilder app)
         {
             app.UseMiddleware<HealthCheckMiddleware>();
-            app.UsePrometheusServer(options => options.UseDefaultCollectors = true);
+            app.UseMetricServer();
             app.UseMiddleware<CrosscuttingTraceIdentifierMiddleware>();
             if (!_environment.IsProduction())
             {
