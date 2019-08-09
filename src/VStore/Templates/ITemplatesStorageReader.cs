@@ -9,9 +9,9 @@ namespace NuClear.VStore.Templates
     public interface ITemplatesStorageReader
     {
         Task<ContinuationContainer<IdentifyableObjectRecord<long>>> List(string continuationToken);
-        Task<IReadOnlyCollection<ObjectMetadataRecord>> GetTemplateMetadatas(IReadOnlyCollection<long> ids);
+        Task<IReadOnlyCollection<ObjectMetadataRecord>> GetTemplatesMetadata(IReadOnlyCollection<long> ids);
         Task<TemplateDescriptor> GetTemplateDescriptor(long id, string versionId);
-        Task<string> GetTemplateLatestVersion(long id);
+        Task<(string versionId, int versionIndex)> GetTemplateLatestVersion(long id);
         Task<bool> IsTemplateExists(long id);
         Task<IReadOnlyCollection<TemplateVersionRecord>> GetTemplateVersions(long id);
     }

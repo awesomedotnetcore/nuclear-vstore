@@ -14,10 +14,7 @@ namespace NuClear.VStore.Json
 
         public override bool CanConvert(Type objectType) => typeof(IObjectDescriptor).IsAssignableFrom(objectType);
 
-        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
-        {
-            throw new NotSupportedException();
-        }
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) => throw new NotSupportedException();
 
         public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
         {
@@ -32,18 +29,15 @@ namespace NuClear.VStore.Json
             }
 
             var descriptors = obj[Tokens.ElementsToken];
-            if (descriptors == null)
-            {
-                throw new JsonSerializationException($"Object descriptor doesn't contain '{Tokens.ElementsToken}' token");
-            }
-
-            var elementDescriptors = descriptors.Select(x => x.ToObject<ObjectElementDescriptor>(serializer))
-                                                .ToList();
-
             obj.Remove(Tokens.ElementsToken);
-
             var objectDescriptor = obj.ToObject<ObjectDescriptor>();
-            objectDescriptor.Elements = elementDescriptors;
+            if (descriptors != null)
+            {
+                var elementDescriptors = descriptors.Select(x => x.ToObject<ObjectElementDescriptor>(serializer))
+                                                    .ToList();
+
+                objectDescriptor.Elements = elementDescriptors;
+            }
 
             return objectDescriptor;
         }

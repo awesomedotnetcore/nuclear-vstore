@@ -185,15 +185,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Create session for uploading file(-s) using latest version of template
+        /// Create session for uploading file(-s) using latest version of template.
         /// </summary>
-        /// <param name="apiVersion">API version</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="language">Language of session</param>
-        /// <param name="templateId">Template identifier</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="language">Language of session.</param>
+        /// <param name="templateId">Template identifier.</param>
+        /// <returns>HTTP code.</returns>
         [HttpPost("{language:lang}/{templateId:long}")]
         [ProducesResponseType(201)]
         [ProducesResponseType(typeof(string), 400)]
@@ -233,16 +233,16 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Create session for uploading file(-s) using specific version of template
+        /// Create session for uploading file(-s) using specific version of template.
         /// </summary>
-        /// <param name="apiVersion">API version</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="language">Language of session</param>
-        /// <param name="templateId">Template identifier</param>
-        /// <param name="templateVersionId">Template version identifier</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="language">Language of session.</param>
+        /// <param name="templateId">Template identifier.</param>
+        /// <param name="templateVersionId">Template version identifier.</param>
+        /// <returns>HTTP code.</returns>
         [HttpPost("{language:lang}/{templateId:long}/{templateVersionId}")]
         [ProducesResponseType(201)]
         [ProducesResponseType(typeof(string), 400)]
@@ -283,13 +283,13 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Upload file
+        /// Upload file.
         /// </summary>
-        /// <param name="sessionId">Session identifier</param>
-        /// <param name="templateCode">Template code of element for uploading file</param>
-        /// <param name="rawFileType">File type</param>
-        /// <param name="rawImageSize">File size (for "sizeSpecificBitmapImage" file type)</param>
-        /// <returns>Raw value of uploaded file</returns>
+        /// <param name="sessionId">Session identifier.</param>
+        /// <param name="templateCode">Template code of element for uploading file.</param>
+        /// <param name="rawFileType">File type.</param>
+        /// <param name="rawImageSize">File size (for "sizeSpecificBitmapImage" file type).</param>
+        /// <returns>Raw value of uploaded file.</returns>
         [AllowAnonymous]
         [HttpPost("{sessionId:guid}/upload/{templateCode:int}")]
         [DisableFormValueModelBinding]
@@ -376,12 +376,12 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Fetch file from specified URL
+        /// Fetch file from specified URL.
         /// </summary>
-        /// <param name="sessionId">Session identifier</param>
-        /// <param name="templateCode">Template code of element for fetching file</param>
-        /// <param name="fetchParameters">Fetch parameters</param>
-        /// <returns>Raw value of fetched file</returns>
+        /// <param name="sessionId">Session identifier.</param>
+        /// <param name="templateCode">Template code of element for fetching file.</param>
+        /// <param name="fetchParameters">Fetch parameters.</param>
+        /// <returns>Raw value of fetched file.</returns>
         [AllowAnonymous]
         [HttpPost("{sessionId:guid}/fetch/{templateCode:int}")]
         [Consumes(Http.ContentType.Json)]

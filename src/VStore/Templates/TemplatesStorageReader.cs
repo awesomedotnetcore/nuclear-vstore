@@ -1,15 +1,10 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
+using System.Data;
 using System.Linq;
-using System.Net;
-using System.Text;
 using System.Threading.Tasks;
 
-using Amazon.S3;
-using Amazon.S3.Model;
-
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 
 using Newtonsoft.Json;
@@ -17,224 +12,173 @@ using Newtonsoft.Json;
 using NuClear.VStore.DataContract;
 using NuClear.VStore.Descriptors.Templates;
 using NuClear.VStore.Json;
-using NuClear.VStore.Options;
+using NuClear.VStore.Models;
 using NuClear.VStore.S3;
 
 namespace NuClear.VStore.Templates
 {
     public sealed class TemplatesStorageReader : ITemplatesStorageReader
     {
-        private readonly IS3Client _s3Client;
-        private readonly IMemoryCache _memoryCache;
-        private readonly string _bucketName;
-        private readonly int _degreeOfParallelism;
+        private const int BatchCount = 1000;
 
-        public TemplatesStorageReader(CephOptions cephOptions, IS3Client s3Client, IMemoryCache memoryCache)
+        private readonly VStoreContext _context;
+        private readonly IMemoryCache _memoryCache;
+
+        public TemplatesStorageReader(VStoreContext context, IMemoryCache memoryCache)
         {
-            _s3Client = s3Client;
+            _context = context;
             _memoryCache = memoryCache;
-            _bucketName = cephOptions.TemplatesBucketName;
-            _degreeOfParallelism = cephOptions.DegreeOfParallelism;
         }
 
         public async Task<ContinuationContainer<IdentifyableObjectRecord<long>>> List(string continuationToken)
         {
-            var listResponse = await _s3Client.ListObjectsAsync(new ListObjectsRequest { BucketName = _bucketName, Marker = continuationToken });
+            var listResponse = _context.Templates.AsNoTracking();
+            if (long.TryParse(continuationToken, out var parsedContinuationToken))
+            {
+                listResponse = listResponse.Where(x => x.Id > parsedContinuationToken);
+            }
 
-            var records = listResponse.S3Objects.Select(x => new IdentifyableObjectRecord<long>(long.Parse(x.Key), x.LastModified)).ToList();
-            return new ContinuationContainer<IdentifyableObjectRecord<long>>(records, listResponse.NextMarker);
+            IReadOnlyList<long> identifiers;
+            IReadOnlyDictionary<long, DateTime> lastVersions;
+            using (await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted))
+            {
+                identifiers = await listResponse.Select(x => x.Id)
+                                                .Distinct()
+                                                .OrderBy(x => x)
+                                                .Take(BatchCount)
+                                                .ToListAsync();
+
+                var versions = await _context.Templates
+                                             .AsNoTracking()
+                                             .Where(x => identifiers.Contains(x.Id))
+                                             .Select(x => new { x.Id, x.VersionIndex, x.LastModified })
+                                             .ToListAsync();
+
+                lastVersions = versions.GroupBy(x => x.Id, (id, g) => g.OrderByDescending(x => x.VersionIndex).First())
+                                       .ToDictionary(x => x.Id, x => DateTime.SpecifyKind(x.LastModified, DateTimeKind.Utc));
+            }
+
+            var nextMarker = identifiers.Count > 0 ? identifiers[identifiers.Count - 1].ToString() : continuationToken;
+            var records = identifiers.Select(x => new IdentifyableObjectRecord<long>(x, lastVersions[x]))
+                                     .ToList();
+
+            return new ContinuationContainer<IdentifyableObjectRecord<long>>(records, nextMarker);
         }
 
-        public async Task<IReadOnlyCollection<ObjectMetadataRecord>> GetTemplateMetadatas(IReadOnlyCollection<long> ids)
+        public async Task<IReadOnlyCollection<ObjectMetadataRecord>> GetTemplatesMetadata(IReadOnlyCollection<long> ids)
         {
             var uniqueIds = new HashSet<long>(ids);
-            var partitioner = Partitioner.Create(uniqueIds);
-            var result = new ObjectMetadataRecord[uniqueIds.Count];
-            var tasks = partitioner
-                .GetOrderablePartitions(_degreeOfParallelism)
-                .Select(async x =>
-                            {
-                                while (x.MoveNext())
-                                {
-                                    var templateId = x.Current.Value;
-                                    ObjectMetadataRecord record;
-                                    try
-                                    {
-                                        var versionId = await GetTemplateLatestVersion(templateId);
+            var versions = await _context.Templates
+                                         .AsNoTracking()
+                                         .Where(x => uniqueIds.Contains(x.Id))
+                                         .ToListAsync();
 
-                                        var response = await _s3Client.GetObjectMetadataAsync(_bucketName, templateId.ToString(), versionId);
-                                        var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
-                                        var author = metadataWrapper.Read<string>(MetadataElement.Author);
-                                        var authorLogin = metadataWrapper.Read<string>(MetadataElement.AuthorLogin);
-                                        var authorName = metadataWrapper.Read<string>(MetadataElement.AuthorName);
+            var lastVersions = versions.GroupBy(x => x.Id, (id, g) => g.OrderByDescending(x => x.VersionIndex).First());
 
-                                        record = new ObjectMetadataRecord(
-                                            templateId,
-                                            versionId,
-                                            response.LastModified,
-                                            new AuthorInfo(author, authorLogin, authorName));
-                                    }
-                                    catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-                                    {
-                                        record = null;
-                                    }
-                                    catch (ObjectNotFoundException)
-                                    {
-                                        record = null;
-                                    }
+            var result = lastVersions.Select(x => new ObjectMetadataRecord(
+                                                 x.Id,
+                                                 x.VersionId,
+                                                 DateTime.SpecifyKind(x.LastModified, DateTimeKind.Utc),
+                                                 new AuthorInfo(x.Author, x.AuthorLogin, x.AuthorName)))
+                                     .ToList();
 
-                                    result[x.Current.Key] = record;
-                                }
-                            });
-
-            await Task.WhenAll(tasks);
-            return result.Where(x => x != null).ToList();
+            return result;
         }
 
         public async Task<TemplateDescriptor> GetTemplateDescriptor(long id, string versionId)
         {
-            var templateVersionId = string.IsNullOrEmpty(versionId) ? await GetTemplateLatestVersion(id) : versionId;
+            var templateVersionId = string.IsNullOrEmpty(versionId) ? (await GetTemplateLatestVersion(id)).versionId : versionId;
 
             var templateDescriptor = await _memoryCache.GetOrCreateAsync(
                 id.AsCacheEntryKey(templateVersionId),
                 async entry =>
                     {
-                        try
-                        {
-                            using (var response = await _s3Client.GetObjectAsync(_bucketName, id.ToString(), templateVersionId))
-                            {
-                                var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
-                                var author = metadataWrapper.Read<string>(MetadataElement.Author);
-                                var authorLogin = metadataWrapper.Read<string>(MetadataElement.AuthorLogin);
-                                var authorName = metadataWrapper.Read<string>(MetadataElement.AuthorName);
+                        var template = await _context.Templates
+                                                     .AsNoTracking()
+                                                     .Where(x => x.Id == id && x.VersionId == templateVersionId)
+                                                     .FirstOrDefaultAsync();
 
-                                string json;
-                                using (var reader = new StreamReader(response.ResponseStream, Encoding.UTF8))
-                                {
-                                    json = reader.ReadToEnd();
-                                }
-
-                                var descriptor = new TemplateDescriptor
-                                    {
-                                        Id = id,
-                                        VersionId = templateVersionId,
-                                        LastModified = response.LastModified,
-                                        Author = author,
-                                        AuthorLogin = authorLogin,
-                                        AuthorName = authorName
-                                    };
-                                JsonConvert.PopulateObject(json, descriptor, SerializerSettings.Default);
-
-                                entry.SetValue(descriptor)
-                                     .SetPriority(CacheItemPriority.NeverRemove);
-
-                                return descriptor;
-                            }
-                        }
-                        catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                        if (template == null)
                         {
                             throw new ObjectNotFoundException($"Template '{id}' version '{templateVersionId}' not found");
                         }
+
+                        var descriptor = GetTemplateDescriptorFromEntity(template);
+
+                        entry.SetValue(descriptor)
+                             .SetPriority(CacheItemPriority.NeverRemove);
+
+                        return descriptor;
                     });
 
             return templateDescriptor;
         }
 
-        public async Task<string> GetTemplateLatestVersion(long id)
+        public async Task<(string versionId, int versionIndex)> GetTemplateLatestVersion(long id)
         {
-            var idAsString = id.ToString();
-            var versionsResponse = await _s3Client.ListVersionsAsync(_bucketName, idAsString);
-            var version = versionsResponse.Versions.Find(x => x.Key == idAsString && !x.IsDeleteMarker && x.IsLatest);
-            if (version == null)
+            var templateVersion = await _context.Templates
+                                                .AsNoTracking()
+                                                .Where(x => x.Id == id)
+                                                .OrderByDescending(x => x.VersionIndex)
+                                                .FirstOrDefaultAsync();
+
+            if (templateVersion == null)
             {
                 throw new ObjectNotFoundException($"Template '{id}' versions not found");
             }
 
-            return version.VersionId;
+            return (templateVersion.VersionId, templateVersion.VersionIndex);
         }
 
-        public async Task<bool> IsTemplateExists(long id)
-        {
-            var idAsString = id.ToString();
-            var listResponse = await _s3Client.ListObjectsV2Async(
-                                   new ListObjectsV2Request
-                                       {
-                                           BucketName = _bucketName,
-                                           Prefix = idAsString
-                                       });
-            return listResponse.S3Objects.FindIndex(o => o.Key == idAsString) != -1;
-        }
+        public async Task<bool> IsTemplateExists(long id) =>
+            await _context.Templates
+                          .AsNoTracking()
+                          .AnyAsync(x => x.Id == id);
 
         public async Task<IReadOnlyCollection<TemplateVersionRecord>> GetTemplateVersions(long id)
         {
-            var idAsString = id.ToString();
-            var templateDescriptors = new List<TemplateDescriptor>();
+            var templateVersions = await _context.Templates
+                                                 .AsNoTracking()
+                                                 .Where(x => x.Id == id)
+                                                 .OrderByDescending(x => x.VersionIndex)
+                                                 .ToListAsync();
 
-            async Task<(bool IsTruncated, int NextVersionIndex, string NextVersionIdMarker)> ListVersions(int nextVersionIndex, string nextVersionIdMarker)
+            if (templateVersions.Count == 0)
             {
-                var response = await _s3Client.ListVersionsAsync(
-                                   new ListVersionsRequest
-                                       {
-                                           BucketName = _bucketName,
-                                           Prefix = idAsString,
-                                           VersionIdMarker = nextVersionIdMarker
-                                       });
-
-                var nonDeletedVersions = response.Versions.FindAll(x => !x.IsDeleteMarker && x.Key == idAsString);
-                nextVersionIndex += nonDeletedVersions.Count;
-
-                var descriptors = new TemplateDescriptor[nonDeletedVersions.Count];
-                var partitioner = Partitioner.Create(nonDeletedVersions);
-                var tasks = partitioner.GetOrderablePartitions(_degreeOfParallelism)
-                                       .Select(async partition =>
-                                                   {
-                                                       while (partition.MoveNext())
-                                                       {
-                                                           var index = partition.Current.Key;
-                                                           var versionId = partition.Current.Value.VersionId;
-
-                                                           descriptors[index] = await GetTemplateDescriptor(id, versionId);
-                                                       }
-                                                   });
-                await Task.WhenAll(tasks);
-
-                templateDescriptors.AddRange(descriptors);
-
-                return (response.IsTruncated, nextVersionIndex, response.NextVersionIdMarker);
+                throw new ObjectNotFoundException($"Template '{id}' not found.");
             }
 
-            var result = await ListVersions(0, null);
-            if (templateDescriptors.Count == 0)
+            var records = new List<TemplateVersionRecord>(templateVersions.Count);
+            foreach (var template in templateVersions)
             {
-                if (!await IsTemplateExists(id))
-                {
-                    throw new ObjectNotFoundException($"Template '{id}' not found.");
-                }
-
-                return Array.Empty<TemplateVersionRecord>();
-            }
-
-            while (result.IsTruncated)
-            {
-                result = await ListVersions(result.NextVersionIndex, result.NextVersionIdMarker);
-            }
-
-            var maxVersionIndex = result.NextVersionIndex;
-            var records = new TemplateVersionRecord[templateDescriptors.Count];
-            for (var index = 0; index < templateDescriptors.Count; ++index)
-            {
-                var descriptor = templateDescriptors[index];
-                records[index] = new TemplateVersionRecord(
-                    descriptor.Id,
-                    descriptor.VersionId,
-                    --maxVersionIndex,
-                    descriptor.LastModified,
-                    new AuthorInfo(descriptor.Author, descriptor.AuthorLogin, descriptor.AuthorName),
-                    descriptor.Properties,
-                    descriptor.Elements.Select(x => x.TemplateCode).ToList());
+                var descriptor = GetTemplateDescriptorFromEntity(template);
+                records.Add(new TemplateVersionRecord(
+                                template.Id,
+                                template.VersionId,
+                                template.VersionIndex,
+                                DateTime.SpecifyKind(template.LastModified, DateTimeKind.Utc),
+                                new AuthorInfo(template.Author, template.AuthorLogin, template.AuthorName),
+                                descriptor.Properties,
+                                descriptor.Elements.Select(x => x.TemplateCode).ToList()));
             }
 
             return records;
+        }
+
+        private static TemplateDescriptor GetTemplateDescriptorFromEntity(Template template)
+        {
+            var descriptor = new TemplateDescriptor
+                {
+                    Id = template.Id,
+                    VersionId = template.VersionId,
+                    Author = template.Author,
+                    AuthorLogin = template.AuthorLogin,
+                    AuthorName = template.AuthorName,
+                    LastModified = DateTime.SpecifyKind(template.LastModified, DateTimeKind.Utc)
+                };
+
+            JsonConvert.PopulateObject(template.Data, descriptor, SerializerSettings.Default);
+            return descriptor;
         }
     }
 }

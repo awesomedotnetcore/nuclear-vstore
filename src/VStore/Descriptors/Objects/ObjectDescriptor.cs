@@ -9,6 +9,7 @@ namespace NuClear.VStore.Descriptors.Objects
     {
         public long Id { get; set; }
         public string VersionId { get; set; }
+        public int VersionIndex { get; set; }
         public DateTime LastModified { get; set; }
         public long TemplateId { get; set; }
         public string TemplateVersionId { get; set; }

@@ -123,18 +123,18 @@ namespace NuClear.VStore.Sessions
         }
 
         /// <summary>
-        /// Initiate upload session
+        /// Initiate upload session.
         /// </summary>
-        /// <param name="sessionId">Session identifier</param>
-        /// <param name="templateCode">Element's template code</param>
-        /// <param name="uploadedFileMetadata">File metadata</param>
-        /// <exception cref="MissingFilenameException">Filename is not specified</exception>
-        /// <exception cref="InvalidTemplateException">Binary content is not expected for specified template code</exception>
-        /// <exception cref="ObjectNotFoundException">Session or template has not been found</exception>
-        /// <exception cref="SessionExpiredException">Specified session is expired</exception>
-        /// <exception cref="S3Exception">Error making request to S3</exception>
-        /// <exception cref="InvalidBinaryException">Binary does not meet template's constraints</exception>
-        /// <returns>Initiated upload session instance</returns>
+        /// <param name="sessionId">Session identifier.</param>
+        /// <param name="templateCode">Element's template code.</param>
+        /// <param name="uploadedFileMetadata">File metadata.</param>
+        /// <exception cref="MissingFilenameException">Filename is not specified.</exception>
+        /// <exception cref="InvalidTemplateException">Binary content is not expected for specified template code.</exception>
+        /// <exception cref="ObjectNotFoundException">Session or template has not been found.</exception>
+        /// <exception cref="SessionExpiredException">Specified session is expired.</exception>
+        /// <exception cref="S3Exception">Error making request to S3.</exception>
+        /// <exception cref="InvalidBinaryException">Binary does not meet template's constraints.</exception>
+        /// <returns>Initiated upload session instance.</returns>
         public async Task<MultipartUploadSession> InitiateMultipartUpload(
             Guid sessionId,
             int templateCode,
@@ -253,7 +253,7 @@ namespace NuClear.VStore.Sessions
                     await _cephS3Client.CopyObjectAsync(copyRequest);
                     _uploadedBinariesMetric.Inc();
 
-                    _memoryCache.Set(fileKey, new BinaryMetadata(fileName, getResponse.ContentLength), uploadSession.SessionExpiresAt);
+                    _memoryCache.Set(fileKey, new BinaryMetadata(fileName, getResponse.ContentLength, getResponse.Headers.ContentType), uploadSession.SessionExpiresAt);
 
                     return fileKey;
                 }
@@ -265,20 +265,20 @@ namespace NuClear.VStore.Sessions
         }
 
         /// <summary>
-        /// Fetch file for created session
+        /// Fetch file for created session.
         /// </summary>
-        /// <param name="sessionId">Session identifier</param>
-        /// <param name="templateCode">Element's template code</param>
-        /// <param name="fetchParameters">Fetch parameters</param>
-        /// <exception cref="InvalidTemplateException">Specified template code does not refer to binary element</exception>
-        /// <exception cref="InvalidFetchUrlException">Fetch URL is invalid</exception>
-        /// <exception cref="MissingFilenameException">Filename is not specified</exception>
-        /// <exception cref="ObjectNotFoundException">Session or template has not been found</exception>
-        /// <exception cref="SessionExpiredException">Specified session is expired</exception>
-        /// <exception cref="S3Exception">Error making request to S3</exception>
-        /// <exception cref="InvalidBinaryException">Binary does not meet template's constraints</exception>
-        /// <exception cref="FetchFailedException">Fetch request failed</exception>
-        /// <returns>Fetched file key</returns>
+        /// <param name="sessionId">Session identifier.</param>
+        /// <param name="templateCode">Element's template code.</param>
+        /// <param name="fetchParameters">Fetch parameters.</param>
+        /// <exception cref="InvalidTemplateException">Specified template code does not refer to binary element.</exception>
+        /// <exception cref="InvalidFetchUrlException">Fetch URL is invalid.</exception>
+        /// <exception cref="MissingFilenameException">Filename is not specified.</exception>
+        /// <exception cref="ObjectNotFoundException">Session or template has not been found.</exception>
+        /// <exception cref="SessionExpiredException">Specified session is expired.</exception>
+        /// <exception cref="S3Exception">Error making request to S3.</exception>
+        /// <exception cref="InvalidBinaryException">Binary does not meet template's constraints.</exception>
+        /// <exception cref="FetchFailedException">Fetch request failed.</exception>
+        /// <returns>Fetched file key.</returns>
         public async Task<string> FetchFile(Guid sessionId, int templateCode, FetchParameters fetchParameters)
         {
             if (!TryCreateUri(fetchParameters, out var fetchUri))

@@ -33,13 +33,13 @@ namespace NuClear.VStore.Sessions
         }
 
         /// <summary>
-        /// Fetch session descriptor with metadata (and store it in cache)
+        /// Fetch session descriptor with metadata (and store it in cache).
         /// </summary>
-        /// <param name="sessionId">Session identifier</param>
-        /// <exception cref="ObjectNotFoundException">Session not found</exception>
-        /// <exception cref="SessionExpiredException">Session has expired</exception>
-        /// <exception cref="S3Exception">S3 error</exception>
-        /// <returns>Session descriptor with metadata</returns>
+        /// <param name="sessionId">Session identifier.</param>
+        /// <exception cref="ObjectNotFoundException">Session not found.</exception>
+        /// <exception cref="SessionExpiredException">Session has expired.</exception>
+        /// <exception cref="S3Exception">S3 error.</exception>
+        /// <returns>Session descriptor with metadata.</returns>
         public async Task<(SessionDescriptor SessionDescriptor, AuthorInfo AuthorInfo, DateTime ExpiresAt)> GetSessionDescriptor(Guid sessionId)
         {
             var result =
@@ -135,7 +135,7 @@ namespace NuClear.VStore.Sessions
                 var metadataWrapper = MetadataCollectionWrapper.For(metadataResponse.Metadata);
                 var filename = metadataWrapper.Read<string>(MetadataElement.Filename);
 
-                return new BinaryMetadata(filename, metadataResponse.ContentLength);
+                return new BinaryMetadata(filename, metadataResponse.ContentLength, metadataResponse.Headers.ContentType);
             }
             catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
             {
@@ -144,6 +144,30 @@ namespace NuClear.VStore.Sessions
             catch (Exception ex)
             {
                 throw new S3Exception(ex);
+            }
+        }
+
+        public async Task<(Stream, BinaryMetadata)> GetBinaryData(string fileKey)
+        {
+            try
+            {
+                using (var getResponse = await _cephS3Client.GetObjectAsync(_filesBucketName, fileKey))
+                {
+                    var memoryStream = new MemoryStream();
+                    using (getResponse.ResponseStream)
+                    {
+                        await getResponse.ResponseStream.CopyToAsync(memoryStream);
+                        memoryStream.Position = 0;
+                    }
+
+                    var metadataWrapper = MetadataCollectionWrapper.For(getResponse.Metadata);
+                    var fileName = metadataWrapper.Read<string>(MetadataElement.Filename);
+                    return (memoryStream, new BinaryMetadata(fileName, getResponse.ContentLength, getResponse.Headers.ContentType));
+                }
+            }
+            catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                throw new ObjectNotFoundException($"Binary with the key '{fileKey}' not found.");
             }
         }
     }

@@ -1,14 +1,12 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
+using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-using Amazon.S3;
-using Amazon.S3.Model;
-
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 using Newtonsoft.Json;
@@ -20,10 +18,10 @@ using NuClear.VStore.Descriptors.Objects.Persistence;
 using NuClear.VStore.Descriptors.Sessions;
 using NuClear.VStore.Descriptors.Templates;
 using NuClear.VStore.Events;
-using NuClear.VStore.Http;
 using NuClear.VStore.Json;
 using NuClear.VStore.Kafka;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Objects.ContentPreprocessing;
 using NuClear.VStore.Objects.ContentValidation;
 using NuClear.VStore.Objects.ContentValidation.Errors;
@@ -36,27 +34,26 @@ using NuClear.VStore.Sessions.Upload;
 using NuClear.VStore.Templates;
 using Prometheus;
 
+using Object = NuClear.VStore.Models.Object;
+
 namespace NuClear.VStore.Objects
 {
     public sealed class ObjectsManagementService : IObjectsManagementService
     {
         private readonly ILogger<ObjectsManagementService> _logger;
-        private readonly IS3Client _s3Client;
+        private readonly VStoreContext _context;
         private readonly ITemplatesStorageReader _templatesStorageReader;
         private readonly IObjectsStorageReader _objectsStorageReader;
         private readonly SessionStorageReader _sessionStorageReader;
         private readonly DistributedLockManager _distributedLockManager;
         private readonly IEventSender _eventSender;
-        private readonly string _bucketName;
-        private readonly string _filesBucketName;
         private readonly string _objectEventsTopic;
         private readonly Counter _referencedBinariesMetric;
 
         public ObjectsManagementService(
             ILogger<ObjectsManagementService> logger,
-            CephOptions cephOptions,
             KafkaOptions kafkaOptions,
-            IS3Client s3Client,
+            VStoreContext context,
             ITemplatesStorageReader templatesStorageReader,
             IObjectsStorageReader objectsStorageReader,
             SessionStorageReader sessionStorageReader,
@@ -65,14 +62,12 @@ namespace NuClear.VStore.Objects
             MetricsProvider metricsProvider)
         {
             _logger = logger;
-            _s3Client = s3Client;
+            _context = context;
             _templatesStorageReader = templatesStorageReader;
             _objectsStorageReader = objectsStorageReader;
             _sessionStorageReader = sessionStorageReader;
             _distributedLockManager = distributedLockManager;
             _eventSender = eventSender;
-            _bucketName = cephOptions.ObjectsBucketName;
-            _filesBucketName = cephOptions.FilesBucketName;
             _objectEventsTopic = kafkaOptions.ObjectEventsTopic;
             _referencedBinariesMetric = metricsProvider.GetReferencedBinariesMetric();
         }
@@ -106,7 +101,7 @@ namespace NuClear.VStore.Objects
 
                 EnsureObjectElementsState(id, templateDescriptor.Elements, objectDescriptor.Elements);
 
-                return await PutObject(id, null, authorInfo, Enumerable.Empty<IObjectElementDescriptor>(), objectDescriptor);
+                return await PutObject(id, null, null, authorInfo, Enumerable.Empty<IObjectElementDescriptor>(), objectDescriptor);
             }
         }
 
@@ -116,7 +111,7 @@ namespace NuClear.VStore.Objects
 
             if (string.IsNullOrEmpty(versionId))
             {
-                throw new ArgumentException("Object version must be set", nameof(versionId));
+                throw new InputDataValidationException("Object version must be set");
             }
 
             using (await _distributedLockManager.AcquireLockAsync(id))
@@ -162,7 +157,7 @@ namespace NuClear.VStore.Objects
 
                 EnsureObjectElementsState(id, objectDescriptor.Elements, modifiedObjectDescriptor.Elements);
 
-                return await PutObject(id, versionId, authorInfo, objectDescriptor.Elements, modifiedObjectDescriptor, currentElementsIds);
+                return await PutObject(id, versionId, objectDescriptor.VersionIndex, authorInfo, objectDescriptor.Elements, modifiedObjectDescriptor, currentElementsIds);
             }
         }
 
@@ -225,7 +220,15 @@ namespace NuClear.VStore.Objects
 
                 EnsureObjectElementsState(id, upgradedObjectTemplateDescriptor.Elements, upgradedObjectDescriptor.Elements);
 
-                return await PutObject(id, versionId, authorInfo, latestObjectDescriptor.Elements, upgradedObjectDescriptor, upgradedObjectElementIds, modifiedElementsTemplateCodes);
+                return await PutObject(
+                           id,
+                           versionId,
+                           latestObjectDescriptor.VersionIndex,
+                           authorInfo,
+                           latestObjectDescriptor.Elements,
+                           upgradedObjectDescriptor,
+                           upgradedObjectElementIds,
+                           modifiedElementsTemplateCodes);
             }
         }
 
@@ -267,45 +270,30 @@ namespace NuClear.VStore.Objects
                 var fileKeys = binaryElement.Value.ExtractFileKeys();
                 foreach (var fileKey in fileKeys)
                 {
-                    using (var getResponse = await _s3Client.GetObjectAsync(_filesBucketName, fileKey))
+                    var (stream, metaData) = await _sessionStorageReader.GetBinaryData(fileKey);
+                    using (stream)
                     {
-                        var memoryStream = new MemoryStream();
-                        using (getResponse.ResponseStream)
+                        IUploadedFileMetadata binaryMetadata;
+                        if (binaryElement.Value is ICompositeBitmapImageElementValue compositeBitmapImageElementValue &&
+                            compositeBitmapImageElementValue.Raw != fileKey)
                         {
-                            await getResponse.ResponseStream.CopyToAsync(memoryStream);
-                            memoryStream.Position = 0;
+                            var image = compositeBitmapImageElementValue.SizeSpecificImages.First(x => x.Raw == fileKey);
+                            binaryMetadata = new UploadedImageMetadata(metaData.Filename, metaData.ContentType, metaData.FileSize, image.Size);
+                        }
+                        else
+                        {
+                            binaryMetadata = new GenericUploadedFileMetadata(metaData.Filename, metaData.ContentType, metaData.FileSize);
                         }
 
-                        using (memoryStream)
+                        try
                         {
-                            var metadataWrapper = MetadataCollectionWrapper.For(getResponse.Metadata);
-                            var fileName = metadataWrapper.Read<string>(MetadataElement.Filename);
-                            IUploadedFileMetadata binaryMetadata;
-                            if (binaryElement.Value is ICompositeBitmapImageElementValue compositeBitmapImageElementValue &&
-                                compositeBitmapImageElementValue.Raw != fileKey)
-                            {
-                                var image = compositeBitmapImageElementValue.SizeSpecificImages.First(x => x.Raw == fileKey);
-                                binaryMetadata = new UploadedImageMetadata(
-                                    fileName,
-                                    getResponse.Headers.ContentType,
-                                    getResponse.ContentLength,
-                                    image.Size);
-                            }
-                            else
-                            {
-                                binaryMetadata = new GenericUploadedFileMetadata(fileName, getResponse.Headers.ContentType, getResponse.ContentLength);
-                            }
-
-                            try
-                            {
-                                BinaryValidationUtils.EnsureFileMetadataIsValid(binaryElement, language, binaryMetadata);
-                                BinaryValidationUtils.EnsureFileHeaderIsValid(binaryElement.TemplateCode, binaryElement.Type, constraints, memoryStream, binaryMetadata);
-                                BinaryValidationUtils.EnsureFileContentIsValid(binaryElement.TemplateCode, binaryElement.Type, constraints, memoryStream, fileName);
-                            }
-                            catch (InvalidBinaryException e)
-                            {
-                                elementErrors.Add(e.Error);
-                            }
+                            BinaryValidationUtils.EnsureFileMetadataIsValid(binaryElement, language, binaryMetadata);
+                            BinaryValidationUtils.EnsureFileHeaderIsValid(binaryElement.TemplateCode, binaryElement.Type, constraints, stream, binaryMetadata);
+                            BinaryValidationUtils.EnsureFileContentIsValid(binaryElement.TemplateCode, binaryElement.Type, constraints, stream, metaData.Filename);
+                        }
+                        catch (InvalidBinaryException e)
+                        {
+                            elementErrors.Add(e.Error);
                         }
                     }
                 }
@@ -354,31 +342,36 @@ namespace NuClear.VStore.Objects
             }
         }
 
-        private static void CheckRequiredProperties(long id, IObjectPersistenceDescriptor objectDescriptor)
+        private static void CheckRequiredProperties(long id, IObjectDescriptor objectDescriptor)
         {
             if (id <= 0)
             {
-                throw new ArgumentException("Object Id must be set", nameof(id));
+                throw new InputDataValidationException("Object Id must be set");
             }
 
             if (objectDescriptor.Language == Language.Unspecified)
             {
-                throw new ArgumentException("Language must be specified.", nameof(objectDescriptor.Language));
+                throw new InputDataValidationException("Language must be specified");
             }
 
             if (objectDescriptor.TemplateId <= 0)
             {
-                throw new ArgumentException("Template Id must be specified", nameof(objectDescriptor.TemplateId));
+                throw new InputDataValidationException("Template Id must be specified");
             }
 
             if (string.IsNullOrEmpty(objectDescriptor.TemplateVersionId))
             {
-                throw new ArgumentException("Template versionId must be specified", nameof(objectDescriptor.TemplateVersionId));
+                throw new InputDataValidationException("Template versionId must be specified");
             }
 
             if (objectDescriptor.Properties == null)
             {
-                throw new ArgumentException("Object properties must be specified", nameof(objectDescriptor.Properties));
+                throw new InputDataValidationException("Object properties must be specified");
+            }
+
+            if (objectDescriptor.Elements == null)
+            {
+                throw new InputDataValidationException("Object elements must be specified");
             }
         }
 
@@ -463,7 +456,8 @@ namespace NuClear.VStore.Objects
 
         private async Task<string> PutObject(
             long id,
-            string versionId,
+            string oldVersionId,
+            int? prevVersionIndex,
             AuthorInfo authorInfo,
             IEnumerable<IObjectElementDescriptor> currentObjectElements,
             IObjectDescriptor objectDescriptor,
@@ -488,71 +482,89 @@ namespace NuClear.VStore.Objects
                 throw new InvalidObjectException(id, nonBinaryErrors, binaryErrors);
             }
 
-            await _eventSender.SendAsync(_objectEventsTopic, new ObjectVersionCreatingEvent(id, versionId));
+            await _eventSender.SendAsync(_objectEventsTopic, new ObjectVersionCreatingEvent(id, oldVersionId));
 
             var totalBinariesCount = 0;
+            var newElementsVersions = new List<ObjectElement>();
             foreach (var elementDescriptor in objectDescriptor.Elements)
             {
                 var (elementPersistenceValue, binariesCount) = ConvertToPersistenceValue(elementDescriptor.Value, metadataForBinaries);
                 var elementPersistenceDescriptor = new ObjectElementPersistenceDescriptor(elementDescriptor, elementPersistenceValue);
                 totalBinariesCount += binariesCount;
-                var request = new PutObjectRequest
+                var data = JsonConvert.SerializeObject(elementPersistenceDescriptor, SerializerSettings.Default);
+                var newElement = new ObjectElement
                     {
-                        Key = id.AsS3ObjectKey(elementDescriptor.Id),
-                        BucketName = _bucketName,
-                        ContentType = ContentType.Json,
-                        ContentBody = JsonConvert.SerializeObject(elementPersistenceDescriptor, SerializerSettings.Default),
-                        CannedACL = S3CannedACL.PublicRead
+                        Id = elementDescriptor.Id,
+                        Data = data,
+                        LastModified = DateTime.UtcNow
                     };
 
-                var elementMetadataWrapper = MetadataCollectionWrapper.For(request.Metadata);
-                elementMetadataWrapper.Write(MetadataElement.Author, authorInfo.Author);
-                elementMetadataWrapper.Write(MetadataElement.AuthorLogin, authorInfo.AuthorLogin);
-                elementMetadataWrapper.Write(MetadataElement.AuthorName, authorInfo.AuthorName);
-
-                await _s3Client.PutObjectAsync(request);
-            }
-
-            var objectKey = id.AsS3ObjectKey(Tokens.ObjectPostfix);
-            var elementVersions = await _objectsStorageReader.GetObjectElementsLatestVersions(id);
-            if (objectElementIdsToSave != null)
-            {
-                var objectElementKeysToSave = new HashSet<string>(objectElementIdsToSave.Select(x => id.AsS3ObjectKey(x)));
-                elementVersions = elementVersions.Where(x => objectElementKeysToSave.Contains(x.Id))
-                                                 .ToList();
+                newElementsVersions.Add(newElement);
             }
 
             var objectPersistenceDescriptor = new ObjectPersistenceDescriptor
                 {
+                    Language = objectDescriptor.Language,
+                    Properties = objectDescriptor.Properties
+                };
+
+            var modifiedElements = modifiedElementsTemplateCodes ?? objectDescriptor.Elements.Select(x => x.TemplateCode);
+            var newVersion = new Object
+                {
+                    Id = id,
                     TemplateId = objectDescriptor.TemplateId,
                     TemplateVersionId = objectDescriptor.TemplateVersionId,
-                    Language = objectDescriptor.Language,
-                    Properties = objectDescriptor.Properties,
-                    Elements = elementVersions
+                    VersionIndex = prevVersionIndex + 1 ?? 0,
+                    Data = JsonConvert.SerializeObject(objectPersistenceDescriptor, SerializerSettings.Default),
+                    Author = authorInfo.Author,
+                    AuthorLogin = authorInfo.AuthorLogin,
+                    AuthorName = authorInfo.AuthorName,
+                    ModifiedElements = modifiedElements.ToArray(),
+                    LastModified = DateTime.UtcNow
                 };
 
-            var putRequest = new PutObjectRequest
+            using (var scope = await _context.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead))
+            {
+                await _context.ObjectElements.AddRangeAsync(newElementsVersions);
+                await _context.Objects.AddAsync(newVersion);
+
+                IReadOnlyCollection<ObjectElementLink> existedElementVersions = Array.Empty<ObjectElementLink>();
+                if (!string.IsNullOrEmpty(oldVersionId))
                 {
-                    Key = objectKey,
-                    BucketName = _bucketName,
-                    ContentType = ContentType.Json,
-                    ContentBody = JsonConvert.SerializeObject(objectPersistenceDescriptor, SerializerSettings.Default),
-                    CannedACL = S3CannedACL.PublicRead
-                };
+                    existedElementVersions = await _context.ObjectElementLinks
+                                                           .AsNoTracking()
+                                                           .Where(x => x.ObjectId == id && x.ObjectVersionId == oldVersionId)
+                                                           .ToListAsync();
+                }
 
-            var metadataWrapper = MetadataCollectionWrapper.For(putRequest.Metadata);
-            metadataWrapper.Write(MetadataElement.Author, authorInfo.Author);
-            metadataWrapper.Write(MetadataElement.AuthorLogin, authorInfo.AuthorLogin);
-            metadataWrapper.Write(MetadataElement.AuthorName, authorInfo.AuthorName);
-            metadataWrapper.Write(
-                MetadataElement.ModifiedElements,
-                string.Join(Tokens.ModifiedElementsDelimiter.ToString(), modifiedElementsTemplateCodes ?? objectDescriptor.Elements.Select(x => x.TemplateCode)));
+                var elementVersions = existedElementVersions.ToDictionary(x => x.ElementId, x => x.ElementVersionId);
+                foreach (var newElementsVersion in newElementsVersions)
+                {
+                    elementVersions[newElementsVersion.Id] = newElementsVersion.VersionId;
+                }
 
-            await _s3Client.PutObjectAsync(putRequest);
+                if (objectElementIdsToSave != null)
+                {
+                    var objectElementKeysToSave = new HashSet<long>(objectElementIdsToSave);
+                    elementVersions = elementVersions.Where(x => objectElementKeysToSave.Contains(x.Key))
+                                                     .ToDictionary(x => x.Key, x => x.Value);
+                }
+
+                var newLinks = elementVersions.Select(x => new ObjectElementLink
+                    {
+                        ObjectId = id,
+                        ObjectVersionId = newVersion.VersionId,
+                        ElementId = x.Key,
+                        ElementVersionId = x.Value
+                    });
+
+                await _context.ObjectElementLinks.AddRangeAsync(newLinks);
+                await _context.SaveChangesAsync();
+                scope.Commit();
+            }
+
             _referencedBinariesMetric.Inc(totalBinariesCount);
-
-            var objectLatestVersion = await _objectsStorageReader.GetObjectLatestVersion(id);
-            return objectLatestVersion.VersionId;
+            return newVersion.VersionId;
         }
 
         private static (IObjectElementValue elementPersistenceValue, int binariesCount) ConvertToPersistenceValue(

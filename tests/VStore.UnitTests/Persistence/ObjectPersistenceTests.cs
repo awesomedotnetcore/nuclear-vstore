@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 
 using Amazon.S3.Model;
 
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -17,9 +18,9 @@ using NuClear.VStore.DataContract;
 using NuClear.VStore.Descriptors;
 using NuClear.VStore.Descriptors.Objects;
 using NuClear.VStore.Descriptors.Templates;
-using NuClear.VStore.Json;
 using NuClear.VStore.Kafka;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Objects;
 using NuClear.VStore.Options;
 using NuClear.VStore.Prometheus;
@@ -43,12 +44,12 @@ namespace VStore.UnitTests.Persistence
 
         private readonly IMemoryCache _memoryCache = Mock.Of<IMemoryCache>();
         private readonly IEventSender _eventSender = Mock.Of<IEventSender>();
-        private readonly Mock<IS3Client> _s3ClientMock = new Mock<IS3Client>();
         private readonly Mock<ICephS3Client> _cephS3ClientMock = new Mock<ICephS3Client>();
         private readonly Mock<ITemplatesStorageReader> _templatesStorageReaderMock = new Mock<ITemplatesStorageReader>();
         private readonly Mock<IObjectsStorageReader> _objectsStorageReaderMock = new Mock<IObjectsStorageReader>();
 
         private readonly ObjectsManagementService _objectsManagementService;
+        private readonly InMemoryContext _inMemoryContext;
 
         public ObjectPersistenceTests()
         {
@@ -57,12 +58,15 @@ namespace VStore.UnitTests.Persistence
                 new InMemoryLockFactory(),
                 new DistributedLockOptions { Expiration = TimeSpan.FromHours(1) });
             var sessionStorageReader = new SessionStorageReader(cephOptions, _cephS3ClientMock.Object, _memoryCache);
+            var options = new DbContextOptionsBuilder<VStoreContext>()
+                          .UseInMemoryDatabase(Guid.NewGuid().ToString())
+                          .Options;
 
+            _inMemoryContext = new InMemoryContext(options);
             _objectsManagementService = new ObjectsManagementService(
                 Mock.Of<ILogger<ObjectsManagementService>>(),
-                cephOptions,
                 new KafkaOptions(),
-                _s3ClientMock.Object,
+                _inMemoryContext,
                 _templatesStorageReaderMock.Object,
                 _objectsStorageReaderMock.Object,
                 sessionStorageReader,
@@ -76,8 +80,7 @@ namespace VStore.UnitTests.Persistence
         {
             var objectDescriptor = new ObjectDescriptor();
 
-            await Assert.ThrowsAsync<ArgumentException>(
-                nameof(objectDescriptor.Language),
+            await Assert.ThrowsAnyAsync<InputDataValidationException>(
                 async () => await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor));
         }
 
@@ -89,8 +92,7 @@ namespace VStore.UnitTests.Persistence
                     Language = Language.Ru
                 };
 
-            await Assert.ThrowsAsync<ArgumentException>(
-                nameof(objectDescriptor.TemplateId),
+            await Assert.ThrowsAnyAsync<InputDataValidationException>(
                 async () => await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor));
         }
 
@@ -103,8 +105,7 @@ namespace VStore.UnitTests.Persistence
                     TemplateId = TemplateId
                 };
 
-            await Assert.ThrowsAsync<ArgumentException>(
-                nameof(objectDescriptor.TemplateVersionId),
+            await Assert.ThrowsAnyAsync<InputDataValidationException>(
                 async () => await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor));
         }
 
@@ -118,8 +119,7 @@ namespace VStore.UnitTests.Persistence
                     TemplateVersionId = TemplateVersionId,
                 };
 
-            await Assert.ThrowsAsync<ArgumentException>(
-                nameof(objectDescriptor.Properties),
+            await Assert.ThrowsAnyAsync<InputDataValidationException>(
                 async () => await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor));
         }
 
@@ -127,13 +127,15 @@ namespace VStore.UnitTests.Persistence
         public async Task ObjectShouldNotExistWhileCreation()
         {
             _objectsStorageReaderMock.Setup(m => m.IsObjectExists(It.IsAny<long>()))
-                                     .Returns(() => Task.FromResult(true));
+                                     .ReturnsAsync(() => true);
+
             var objectDescriptor = new ObjectDescriptor
                 {
                     Language = Language.Ru,
                     TemplateId = TemplateId,
                     TemplateVersionId = TemplateVersionId,
-                    Properties = new JObject()
+                    Properties = new JObject(),
+                    Elements = Array.Empty<IObjectElementDescriptor>()
                 };
 
             await Assert.ThrowsAsync<ObjectAlreadyExistsException>(
@@ -324,7 +326,7 @@ namespace VStore.UnitTests.Persistence
         }
 
         [Fact]
-        public async Task S3PutObjectShouldBeCalledWhileCreation()
+        public async Task S3PutObjectShouldNotBeCalledWhileCreation()
         {
             const int TemplateCode = 100;
             const Language Language = Language.Ru;
@@ -353,12 +355,7 @@ namespace VStore.UnitTests.Persistence
             _templatesStorageReaderMock.Setup(m => m.GetTemplateDescriptor(It.IsAny<long>(), It.IsAny<string>()))
                                        .ReturnsAsync(() => templateDescriptor);
             _objectsStorageReaderMock.Setup(m => m.GetObjectLatestVersion(It.IsAny<long>()))
-                                     .ReturnsAsync(
-                                         new VersionedObjectDescriptor<string>(
-                                             ObjectId.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                             ObjectVersionId,
-                                             DateTime.UtcNow)
-                                     );
+                                     .ReturnsAsync(new VersionedObjectDescriptor<long>(ObjectId, ObjectVersionId, DateTime.UtcNow));
 
             var objectDescriptor = new ObjectDescriptor
                 {
@@ -381,9 +378,10 @@ namespace VStore.UnitTests.Persistence
                         }
                 };
 
+            Assert.False(await _inMemoryContext.Objects.AnyAsync());
             await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor);
 
-            _s3ClientMock.Verify(m => m.PutObjectAsync(It.IsAny<PutObjectRequest>()), Times.Exactly(2));
+            Assert.True(await _inMemoryContext.Objects.AnyAsync());
         }
 
         [Fact]
@@ -416,17 +414,7 @@ namespace VStore.UnitTests.Persistence
             _templatesStorageReaderMock.Setup(m => m.GetTemplateDescriptor(It.IsAny<long>(), It.IsAny<string>()))
                                        .ReturnsAsync(() => templateDescriptor);
             _objectsStorageReaderMock.Setup(m => m.GetObjectLatestVersion(It.IsAny<long>()))
-                                     .ReturnsAsync(
-                                         new VersionedObjectDescriptor<string>(
-                                             ObjectId.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                             ObjectVersionId,
-                                             DateTime.UtcNow)
-                                     );
-
-            var requests = new List<PutObjectRequest>();
-            _s3ClientMock.Setup(m => m.PutObjectAsync(It.IsAny<PutObjectRequest>()))
-                         .Callback<PutObjectRequest>(request => requests.Add(request))
-                         .ReturnsAsync(new PutObjectResponse());
+                                     .ReturnsAsync(new VersionedObjectDescriptor<long>(ObjectId, ObjectVersionId, DateTime.UtcNow));
 
             var objectDescriptor = new ObjectDescriptor
                 {
@@ -451,8 +439,10 @@ namespace VStore.UnitTests.Persistence
 
             await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor);
 
-            var elementContent = requests[0].ContentBody;
-            var elementJson = JObject.Parse(elementContent);
+            Assert.True(await _inMemoryContext.Objects.AnyAsync());
+            var element = await _inMemoryContext.ObjectElements.FirstOrDefaultAsync();
+            Assert.NotNull(element);
+            var elementJson = JObject.Parse(element.Data);
             Assert.Equal("Text", elementJson["value"]["raw"]);
         }
 
@@ -490,12 +480,7 @@ namespace VStore.UnitTests.Persistence
             _templatesStorageReaderMock.Setup(m => m.GetTemplateDescriptor(It.IsAny<long>(), It.IsAny<string>()))
                                        .ReturnsAsync(() => templateDescriptor);
             _objectsStorageReaderMock.Setup(m => m.GetObjectLatestVersion(It.IsAny<long>()))
-                                     .ReturnsAsync(
-                                         new VersionedObjectDescriptor<string>(
-                                             ObjectId.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                             ObjectVersionId,
-                                             DateTime.UtcNow)
-                                     );
+                                     .ReturnsAsync(new VersionedObjectDescriptor<long>(ObjectId, ObjectVersionId, DateTime.UtcNow));
 
             var response = new GetObjectMetadataResponse();
             var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
@@ -503,11 +488,6 @@ namespace VStore.UnitTests.Persistence
 
             _cephS3ClientMock.Setup(m => m.GetObjectMetadataAsync(It.IsAny<string>(), It.IsAny<string>()))
                              .ReturnsAsync(() => response);
-
-            var requests = new List<PutObjectRequest>();
-            _s3ClientMock.Setup(m => m.PutObjectAsync(It.IsAny<PutObjectRequest>()))
-                         .Callback<PutObjectRequest>(request => requests.Add(request))
-                         .ReturnsAsync(new PutObjectResponse());
 
             var memoryStream = new MemoryStream();
             using (var stream = File.OpenRead(Path.Combine("images", "64x48.png")))
@@ -520,8 +500,8 @@ namespace VStore.UnitTests.Persistence
             var getObjectResponse = new GetObjectResponse { ResponseStream = memoryStream };
             metadataWrapper = MetadataCollectionWrapper.For(getObjectResponse.Metadata);
             metadataWrapper.Write(MetadataElement.Filename, "file name.png");
-            _s3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
-                         .ReturnsAsync(getObjectResponse);
+            _cephS3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
+                             .ReturnsAsync(getObjectResponse);
 
             var objectDescriptor = new ObjectDescriptor
                 {
@@ -551,10 +531,13 @@ namespace VStore.UnitTests.Persistence
 
             await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor);
 
-            var elementContent = requests[0].ContentBody;
-            var elementJson = JObject.Parse(elementContent);
+            Assert.True(await _inMemoryContext.Objects.AnyAsync());
+            var element = await _inMemoryContext.ObjectElements.FirstOrDefaultAsync();
+            Assert.NotNull(element);
+            var elementJson = JObject.Parse(element.Data);
             var valueJson = elementJson["value"];
 
+            Assert.NotNull(valueJson);
             Assert.Equal(fileKey, valueJson["raw"]);
             Assert.NotNull(valueJson["filename"]);
             Assert.NotNull(valueJson["filesize"]);
@@ -597,12 +580,7 @@ namespace VStore.UnitTests.Persistence
             _templatesStorageReaderMock.Setup(m => m.GetTemplateDescriptor(It.IsAny<long>(), It.IsAny<string>()))
                                        .ReturnsAsync(() => templateDescriptor);
             _objectsStorageReaderMock.Setup(m => m.GetObjectLatestVersion(It.IsAny<long>()))
-                                     .ReturnsAsync(
-                                         new VersionedObjectDescriptor<string>(
-                                             ObjectId.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                             ObjectVersionId,
-                                             DateTime.UtcNow)
-                                     );
+                                     .ReturnsAsync(new VersionedObjectDescriptor<long>(ObjectId, ObjectVersionId, DateTime.UtcNow));
 
             var response = new GetObjectMetadataResponse();
             var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
@@ -610,11 +588,6 @@ namespace VStore.UnitTests.Persistence
 
             _cephS3ClientMock.Setup(m => m.GetObjectMetadataAsync(It.IsAny<string>(), It.IsAny<string>()))
                              .ReturnsAsync(() => response);
-
-            var requests = new List<PutObjectRequest>();
-            _s3ClientMock.Setup(m => m.PutObjectAsync(It.IsAny<PutObjectRequest>()))
-                         .Callback<PutObjectRequest>(request => requests.Add(request))
-                         .ReturnsAsync(new PutObjectResponse());
 
             var memoryStream = new MemoryStream();
             using (var stream = File.OpenRead(Path.Combine("images", "64x48.png")))
@@ -627,8 +600,8 @@ namespace VStore.UnitTests.Persistence
             var getObjectResponse = new GetObjectResponse { ResponseStream = memoryStream };
             metadataWrapper = MetadataCollectionWrapper.For(getObjectResponse.Metadata);
             metadataWrapper.Write(MetadataElement.Filename, "file name.png");
-            _s3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
-                         .ReturnsAsync(getObjectResponse);
+            _cephS3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
+                             .ReturnsAsync(getObjectResponse);
 
             var objectDescriptor = new ObjectDescriptor
                 {
@@ -657,8 +630,10 @@ namespace VStore.UnitTests.Persistence
 
             await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor);
 
-            var elementContent = requests[0].ContentBody;
-            var elementJson = JObject.Parse(elementContent);
+            Assert.True(await _inMemoryContext.Objects.AnyAsync());
+            var element = await _inMemoryContext.ObjectElements.FirstOrDefaultAsync();
+            Assert.NotNull(element);
+            var elementJson = JObject.Parse(element.Data);
             var valueJson = elementJson["value"];
 
             Assert.Equal(valueJson["raw"], fileKey);
@@ -701,12 +676,7 @@ namespace VStore.UnitTests.Persistence
             _templatesStorageReaderMock.Setup(m => m.GetTemplateDescriptor(TemplateId, TemplateVersionId))
                                        .ReturnsAsync(templateDescriptor);
             _objectsStorageReaderMock.Setup(m => m.GetObjectLatestVersion(It.IsAny<long>()))
-                                     .ReturnsAsync(
-                                         new VersionedObjectDescriptor<string>(
-                                             ObjectId.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                             ObjectVersionId,
-                                             DateTime.UtcNow)
-                                     );
+                                     .ReturnsAsync(new VersionedObjectDescriptor<long>(ObjectId, ObjectVersionId, DateTime.UtcNow));
 
             var response = new GetObjectMetadataResponse();
             var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
@@ -726,13 +696,8 @@ namespace VStore.UnitTests.Persistence
             var getObjectResponse = new GetObjectResponse { ResponseStream = memoryStream };
             metadataWrapper = MetadataCollectionWrapper.For(getObjectResponse.Metadata);
             metadataWrapper.Write(MetadataElement.Filename, "file name.png");
-            _s3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
-                         .ReturnsAsync(getObjectResponse);
-
-            var requests = new List<PutObjectRequest>();
-            _s3ClientMock.Setup(m => m.PutObjectAsync(It.IsAny<PutObjectRequest>()))
-                         .Callback<PutObjectRequest>(request => requests.Add(request))
-                         .ReturnsAsync(new PutObjectResponse());
+            _cephS3ClientMock.Setup(m => m.GetObjectAsync(It.IsAny<string>(), fileKey, It.IsAny<CancellationToken>()))
+                             .ReturnsAsync(getObjectResponse);
 
             var objectDescriptor = new ObjectDescriptor
                 {
@@ -760,8 +725,10 @@ namespace VStore.UnitTests.Persistence
 
             await _objectsManagementService.Create(ObjectId, AuthorInfo, objectDescriptor);
 
-            var elementContent = requests[0].ContentBody;
-            var elementJson = JObject.Parse(elementContent);
+            Assert.True(await _inMemoryContext.Objects.AnyAsync());
+            var element = await _inMemoryContext.ObjectElements.FirstOrDefaultAsync();
+            Assert.NotNull(element);
+            var elementJson = JObject.Parse(element.Data);
             var valueJson = elementJson["value"];
 
             Assert.Equal(fileKey, valueJson["raw"]);

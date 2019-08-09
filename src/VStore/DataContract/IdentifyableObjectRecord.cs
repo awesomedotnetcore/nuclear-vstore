@@ -19,18 +19,12 @@ namespace NuClear.VStore.DataContract
 
         public override bool Equals(object obj)
         {
-            var other = obj as IdentifyableObjectRecord<TId>;
-            if (other == null)
+            if (!(obj is IdentifyableObjectRecord<TId> other))
             {
                 return false;
             }
 
-            if (object.ReferenceEquals(this, other))
-            {
-                return true;
-            }
-
-            return Equals(other);
+            return ReferenceEquals(this, other) || Equals(other);
         }
 
         public bool Equals(IdentifyableObjectRecord<TId> other) => Id.Equals(other.Id);

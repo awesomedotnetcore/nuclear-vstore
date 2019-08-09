@@ -31,7 +31,8 @@ namespace NuClear.VStore.Worker.Jobs
         private readonly string _binariesUsingsTopic;
 
         private readonly ILogger<ObjectEventsProcessingJob> _logger;
-        private readonly IObjectsStorageReader _objectsStorageReader;
+        private readonly IObjectsStorageReader _objectsStorageReaderForVersions;
+        private readonly IObjectsStorageReader _objectsStorageReaderForBinaries;
         private readonly IEventSender _eventSender;
         private readonly EventReceiver _versionEventReceiver;
         private readonly EventReceiver _binariesEventReceiver;
@@ -40,7 +41,8 @@ namespace NuClear.VStore.Worker.Jobs
 
         public ObjectEventsProcessingJob(
             ILogger<ObjectEventsProcessingJob> logger,
-            IObjectsStorageReader objectsStorageReader,
+            IObjectsStorageReader objectsStorageReaderForVersions,
+            IObjectsStorageReader objectsStorageReaderForBinaries,
             KafkaOptions kafkaOptions,
             IEventSender eventSender)
         {
@@ -48,7 +50,8 @@ namespace NuClear.VStore.Worker.Jobs
             _binariesUsingsTopic = kafkaOptions.BinariesReferencesTopic;
 
             _logger = logger;
-            _objectsStorageReader = objectsStorageReader;
+            _objectsStorageReaderForVersions = objectsStorageReaderForVersions;
+            _objectsStorageReaderForBinaries = objectsStorageReaderForBinaries;
             _eventSender = eventSender;
             _versionEventReceiver = new EventReceiver(
                 logger,
@@ -135,14 +138,15 @@ namespace NuClear.VStore.Worker.Jobs
                                  }
                              });
 
-        private static AsyncPolicyWrap<IReadOnlyCollection<ObjectVersionRecord>> CreateGetObjectVersionsResiliencePolicy()
+        private static AsyncPolicyWrap<IReadOnlyCollection<T>> CreateGetObjectVersionsResiliencePolicy<T>()
+            where T : ObjectVersionMetadataRecord
         {
             var fallback =
-                Policy<IReadOnlyCollection<ObjectVersionRecord>>
+                Policy<IReadOnlyCollection<T>>
                     .Handle<ObjectNotFoundException>()
-                    .FallbackAsync((IReadOnlyCollection<ObjectVersionRecord>)null);
+                    .FallbackAsync((IReadOnlyCollection<T>)null);
             var retry =
-                Policy<IReadOnlyCollection<ObjectVersionRecord>>
+                Policy<IReadOnlyCollection<T>>
                     .Handle<ObjectNotFoundException>()
                     .WaitAndRetryAsync(300, attempt => TimeSpan.FromSeconds(1));
             return Policy.WrapAsync(fallback, retry);
@@ -155,11 +159,11 @@ namespace NuClear.VStore.Worker.Jobs
                 var objectId = @event.Source.ObjectId;
                 var versionId = @event.Source.CurrentVersionId;
 
-                IReadOnlyCollection<ObjectVersionRecord> versionRecords;
+                IReadOnlyCollection<ObjectVersionMetadataRecord> versionRecords;
                 if (string.IsNullOrEmpty(versionId))
                 {
-                    var policy = CreateGetObjectVersionsResiliencePolicy();
-                    versionRecords = await policy.ExecuteAsync(() => _objectsStorageReader.GetObjectVersions(objectId, versionId));
+                    var policy = CreateGetObjectVersionsResiliencePolicy<ObjectVersionMetadataRecord>();
+                    versionRecords = await policy.ExecuteAsync(() => _objectsStorageReaderForVersions.GetObjectVersionsMetadata(objectId, versionId));
                     if (versionRecords == null)
                     {
                         _logger.LogWarning(
@@ -171,7 +175,7 @@ namespace NuClear.VStore.Worker.Jobs
                 }
                 else
                 {
-                    versionRecords = await _objectsStorageReader.GetObjectVersions(objectId, versionId);
+                    versionRecords = await _objectsStorageReaderForVersions.GetObjectVersionsMetadata(objectId, versionId);
                 }
 
                 _logger.LogInformation(
@@ -222,8 +226,8 @@ namespace NuClear.VStore.Worker.Jobs
                 IReadOnlyCollection<ObjectVersionRecord> versionRecords;
                 if (string.IsNullOrEmpty(versionId))
                 {
-                    var policy = CreateGetObjectVersionsResiliencePolicy();
-                    versionRecords = await policy.ExecuteAsync(() => _objectsStorageReader.GetObjectVersions(objectId, versionId));
+                    var policy = CreateGetObjectVersionsResiliencePolicy<ObjectVersionRecord>();
+                    versionRecords = await policy.ExecuteAsync(() => _objectsStorageReaderForBinaries.GetObjectVersions(objectId, versionId));
                     if (versionRecords == null)
                     {
                         _logger.LogWarning(
@@ -235,7 +239,7 @@ namespace NuClear.VStore.Worker.Jobs
                 }
                 else
                 {
-                    versionRecords = await _objectsStorageReader.GetObjectVersions(objectId, versionId);
+                    versionRecords = await _objectsStorageReaderForBinaries.GetObjectVersions(objectId, versionId);
                 }
 
                 _logger.LogInformation(

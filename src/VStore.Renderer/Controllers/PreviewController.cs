@@ -39,14 +39,14 @@ namespace NuClear.VStore.Renderer.Controllers
         }
 
         /// <summary>
-        /// Get composite image preview
+        /// Get composite image preview.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <param name="templateCode">Template code of object's element</param>
-        /// <param name="width">Required width</param>
-        /// <param name="height">Required height</param>
-        /// <returns>File with preview</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <param name="templateCode">Template code of object's element.</param>
+        /// <param name="width">Required width.</param>
+        /// <param name="height">Required height.</param>
+        /// <returns>File with preview.</returns>
         [MapToApiVersion("2.0")]
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/image_{width:int}x{height:int}.png")]
         [ProducesResponseType(200)]
@@ -96,14 +96,14 @@ namespace NuClear.VStore.Renderer.Controllers
         }
 
         /// <summary>
-        /// Get composite image preview with rounded corners (old API)
+        /// Get composite image preview with rounded corners (old API).
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <param name="templateCode">Template code of object's element</param>
-        /// <param name="width">Required width</param>
-        /// <param name="height">Required height</param>
-        /// <returns>File with preview</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <param name="templateCode">Template code of object's element.</param>
+        /// <param name="width">Required width.</param>
+        /// <param name="height">Required height.</param>
+        /// <returns>File with preview.</returns>
         [Obsolete, MapToApiVersion("1.0")]
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/image_{width:int}x{height:int}.png")]
         [ProducesResponseType(200)]
@@ -153,14 +153,16 @@ namespace NuClear.VStore.Renderer.Controllers
         }
 
         /// <summary>
-        /// Get scalable image preview
+        /// Get scalable image preview.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <param name="templateCode">Template code of object's element</param>
-        /// <param name="width">Required width</param>
-        /// <param name="height">Required height</param>
-        /// <returns>File with preview</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <param name="templateCode">Template code of object's element.</param>
+        /// <param name="width">Required width.</param>
+        /// <param name="height">Required height.</param>
+        /// <returns>File with preview.</returns>
+        [MapToApiVersion("2.0")]
+        [MapToApiVersion("1.0")]
         [HttpGet("{id:long}/{versionId}/{templateCode:int}/{width:int}x{height:int}")]
         [ProducesResponseType(200)]
         [ProducesResponseType(typeof(string), 400)]

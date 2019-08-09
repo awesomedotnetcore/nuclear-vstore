@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 
-using Amazon.S3;
-using Amazon.S3.Model;
+using Microsoft.EntityFrameworkCore;
 
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -13,9 +13,9 @@ using Newtonsoft.Json.Linq;
 using NuClear.VStore.DataContract;
 using NuClear.VStore.Descriptors;
 using NuClear.VStore.Descriptors.Templates;
-using NuClear.VStore.Http;
 using NuClear.VStore.Json;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Objects;
 using NuClear.VStore.Options;
 using NuClear.VStore.S3;
@@ -39,23 +39,20 @@ namespace NuClear.VStore.Templates
         private static readonly IReadOnlyCollection<FileFormat> ScalableBitmapImageFileFormats =
             new[] { FileFormat.Png, FileFormat.Gif, FileFormat.Jpg, FileFormat.Jpeg };
 
-        private readonly IS3Client _s3Client;
+        private readonly VStoreContext _context;
         private readonly ITemplatesStorageReader _templatesStorageReader;
         private readonly DistributedLockManager _distributedLockManager;
-        private readonly string _bucketName;
         private readonly long _maxBinarySize;
 
         public TemplatesManagementService(
+            VStoreContext context,
             UploadFileOptions uploadFileOptions,
-            CephOptions cephOptions,
-            IS3Client s3Client,
             ITemplatesStorageReader templatesStorageReader,
             DistributedLockManager distributedLockManager)
         {
-            _s3Client = s3Client;
+            _context = context;
             _templatesStorageReader = templatesStorageReader;
             _distributedLockManager = distributedLockManager;
-            _bucketName = cephOptions.TemplatesBucketName;
             _maxBinarySize = uploadFileOptions.MaxBinarySize;
         }
 
@@ -78,9 +75,9 @@ namespace NuClear.VStore.Templates
 
         public async Task<string> CreateTemplate(long id, AuthorInfo authorInfo, ITemplateDescriptor templateDescriptor)
         {
-            if (id == 0)
+            if (id == default)
             {
-                throw new ArgumentException("Template Id must be set", nameof(id));
+                throw new InputDataValidationException("Template Id must be set");
             }
 
             using (await _distributedLockManager.AcquireLockAsync(id))
@@ -90,42 +87,31 @@ namespace NuClear.VStore.Templates
                     throw new ObjectAlreadyExistsException(id);
                 }
 
-                await PutTemplate(id, authorInfo, templateDescriptor);
-
-                // ceph does not return version-id response header, so we need to do another request to get version
-                return await _templatesStorageReader.GetTemplateLatestVersion(id);
+                return await PutTemplate(id, authorInfo, templateDescriptor);
             }
         }
 
         public async Task<string> ModifyTemplate(long id, string versionId, AuthorInfo authorInfo, ITemplateDescriptor templateDescriptor)
         {
-            if (id == 0)
+            if (id == default)
             {
-                throw new ArgumentException("Template Id must be set", nameof(id));
+                throw new InputDataValidationException("Template Id must be set");
             }
 
             if (string.IsNullOrEmpty(versionId))
             {
-                throw new ArgumentException("VersionId must be set", nameof(versionId));
+                throw new InputDataValidationException("VersionId must be set");
             }
 
             using (await _distributedLockManager.AcquireLockAsync(id))
             {
-                if (!await _templatesStorageReader.IsTemplateExists(id))
-                {
-                    throw new ObjectNotFoundException($"Template '{id}' does not exist");
-                }
-
-                var latestVersionId = await _templatesStorageReader.GetTemplateLatestVersion(id);
+                var (latestVersionId, latestVersionIndex) = await _templatesStorageReader.GetTemplateLatestVersion(id);
                 if (!versionId.Equals(latestVersionId, StringComparison.Ordinal))
                 {
                     throw new ConcurrencyException(id, versionId, latestVersionId);
                 }
 
-                await PutTemplate(id, authorInfo, templateDescriptor);
-
-                // ceph does not return version-id response header, so we need to do another request to get version
-                return await _templatesStorageReader.GetTemplateLatestVersion(id);
+                return await PutTemplate(id, authorInfo, templateDescriptor, latestVersionIndex);
             }
         }
 
@@ -331,24 +317,31 @@ namespace NuClear.VStore.Templates
             }
         }
 
-        private async Task PutTemplate(long id, AuthorInfo authorInfo, ITemplateDescriptor templateDescriptor)
+        private async Task<string> PutTemplate(long id, AuthorInfo authorInfo, ITemplateDescriptor templateDescriptor, int? prevVersionIndex = null)
         {
             await VerifyElementDescriptorsConsistency(templateDescriptor.Elements);
 
-            var putRequest = new PutObjectRequest
+            var versionIndex = prevVersionIndex + 1 ?? 0;
+            var json = JsonConvert.SerializeObject(templateDescriptor, SerializerSettings.Default);
+            var template = new Template
                 {
-                    Key = id.ToString(),
-                    BucketName = _bucketName,
-                    ContentType = ContentType.Json,
-                    ContentBody = JsonConvert.SerializeObject(templateDescriptor, SerializerSettings.Default),
-                    CannedACL = S3CannedACL.PublicRead,
+                    Id = id,
+                    VersionIndex = versionIndex,
+                    Data = json,
+                    Author = authorInfo.Author,
+                    AuthorLogin = authorInfo.AuthorLogin,
+                    AuthorName = authorInfo.AuthorName,
+                    LastModified = DateTime.UtcNow
                 };
-            var metadataWrapper = MetadataCollectionWrapper.For(putRequest.Metadata);
-            metadataWrapper.Write(MetadataElement.Author, authorInfo.Author);
-            metadataWrapper.Write(MetadataElement.AuthorLogin, authorInfo.AuthorLogin);
-            metadataWrapper.Write(MetadataElement.AuthorName, authorInfo.AuthorName);
 
-            await _s3Client.PutObjectAsync(putRequest);
+            using (var scope = await _context.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead))
+            {
+                await _context.Templates.AddAsync(template);
+                await _context.SaveChangesAsync();
+                scope.Commit();
+            }
+
+            return template.VersionId;
         }
     }
 }

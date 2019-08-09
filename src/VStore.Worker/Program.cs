@@ -29,6 +29,7 @@ using NuClear.VStore.Worker.Jobs;
 using NuClear.VStore.Objects;
 using NuClear.VStore.Templates;
 using NuClear.VStore.Kafka;
+using NuClear.VStore.Models;
 using NuClear.VStore.Prometheus;
 
 using RedLockNet;
@@ -100,6 +101,7 @@ namespace NuClear.VStore.Worker
                                                  return 0;
                                              });
                     });
+
             app.Command(
                 CommandLine.Commands.Produce,
                 config =>
@@ -158,7 +160,8 @@ namespace NuClear.VStore.Worker
                 .Configure<DistributedLockOptions>(configuration.GetSection("DistributedLocks"))
                 .Configure<CdnOptions>(configuration.GetSection("Cdn"))
                 .Configure<KafkaOptions>(configuration.GetSection("Kafka"))
-                .AddLogging(x => x.AddSerilog(CreateLogger(configuration), true));
+                .AddLogging(x => x.AddSerilog(CreateLogger(configuration), true))
+                .AddPgContext<VStoreContext>(configuration, "VersionedStorage");
 
             var builder = new ContainerBuilder();
             builder.Populate(services);
@@ -284,7 +287,11 @@ namespace NuClear.VStore.Worker
         {
             var workerId = app.Parent.Name;
             var jobId = app.Name;
-            var args = app.Arguments.Select(x => x.Value).Where(x => !string.IsNullOrEmpty(x)).ToList();
+            var args = app.Arguments
+                          .Select(x => x.Value)
+                          .Where(x => !string.IsNullOrEmpty(x))
+                          .ToList();
+
             async Task ExecuteAsync() => await jobRunner.RunAsync(workerId, jobId, args, cts.Token);
 
             ExecuteAsync().GetAwaiter().GetResult();

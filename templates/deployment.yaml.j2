@@ -51,10 +51,6 @@ spec:
           value: {{ ceph_access_key }}
         - name: VSTORE_AWS__ServiceURL
           value: {{ ceph_rgw_url }}
-        - name: VSTORE_Ceph__TemplatesBucketName
-          value: {{ templates_bucket_name }}
-        - name: VSTORE_Ceph__ObjectsBucketName
-          value: {{ objects_bucket_name }}
         - name: VSTORE_Ceph__FilesBucketName
           value: {{ files_bucket_name }}
         - name: VSTORE_VStore__FileStorageEndpoint

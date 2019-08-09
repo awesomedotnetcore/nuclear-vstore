@@ -12,10 +12,7 @@ namespace NuClear.VStore.Json
     {
         public override bool CanWrite => false;
 
-        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
-        {
-            throw new NotSupportedException();
-        }
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) => throw new NotSupportedException();
 
         public override bool CanConvert(Type objectType) => objectType == typeof(IReadOnlyCollection<IElementDescriptor>);
 

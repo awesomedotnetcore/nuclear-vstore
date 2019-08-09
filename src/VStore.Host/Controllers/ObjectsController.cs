@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -38,10 +37,10 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get all objects
+        /// Get all objects.
         /// </summary>
-        /// <param name="continuationToken">Token to continue reading list, should be empty on initial call</param>
-        /// <returns>List of object descriptors</returns>
+        /// <param name="continuationToken">Token to continue reading list, should be empty on initial call.</param>
+        /// <returns>List of object descriptors.</returns>
         [HttpGet]
         [ProducesResponseType(200)]
         public async Task<ActionResult<IReadOnlyCollection<IdentifyableObjectRecord<long>>>> List([FromHeader(Name = Http.HeaderNames.AmsContinuationToken)]string continuationToken)
@@ -57,24 +56,24 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get specified objects
+        /// Get specified objects.
         /// </summary>
-        /// <param name="ids">Object identifiers</param>
-        /// <returns>List of object descriptors</returns>
+        /// <param name="ids">Object identifiers.</param>
+        /// <returns>List of object descriptors.</returns>
         [HttpGet("specified")]
         [ProducesResponseType(200)]
         public async Task<ActionResult<IReadOnlyCollection<ObjectMetadataRecord>>> List([FromQuery]IReadOnlyCollection<long> ids)
         {
-            var records = await _objectsStorageReader.GetObjectMetadatas(ids);
+            var records = await _objectsStorageReader.GetObjectsMetadata(ids);
             return Json(records);
         }
 
         /// <summary>
-        /// Get object's specific version template
+        /// Get object's specific version template.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <returns>Template descriptor</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <returns>Template descriptor.</returns>
         [HttpGet("{id:long}/{versionId}/template")]
         [ResponseCache(Duration = 120)]
         [ProducesResponseType(200)]
@@ -96,15 +95,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get object versions metadata
+        /// Get object versions metadata.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <returns>List of object versions</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <returns>List of object versions.</returns>
         [HttpGet("{id:long}/versions")]
         [ProducesResponseType(typeof(IReadOnlyCollection<ObjectVersionMetadataRecord>), 200)]
         [ProducesResponseType(404)]
         [ProducesResponseType(503)]
-        public async Task<ActionResult<IReadOnlyCollection<ObjectVersionRecord>>> GetVersions(long id)
+        public async Task<ActionResult<IReadOnlyCollection<ObjectVersionMetadataRecord>>> GetVersions(long id)
         {
             try
             {
@@ -122,11 +121,11 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get object's latest version metadata
+        /// Get object's latest version metadata.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="ifNoneMatch">Object version to check if it has been modified (optional)</param>
-        /// <returns>No body with status 200 Ok or 404 Not Found or 304 Not Modified</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="ifNoneMatch">Object version to check if it has been modified (optional).</param>
+        /// <returns>No body with status 200 Ok or 404 Not Found or 304 Not Modified.</returns>
         [HttpHead("{id:long}")]
         [ProducesResponseType(200)]
         [ProducesResponseType(304)]
@@ -151,11 +150,11 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get object's latest version
+        /// Get object's latest version.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="ifNoneMatch">Object version to check if it has been modified (optional)</param>
-        /// <returns>Object descriptor or 304 Not Modified</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="ifNoneMatch">Object version to check if it has been modified (optional).</param>
+        /// <returns>Object descriptor or 304 Not Modified.</returns>
         [HttpGet("{id:long}")]
         [ProducesResponseType(typeof(object), 200)]
         [ProducesResponseType(304)]
@@ -197,11 +196,11 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get object's specific version metadata
+        /// Get object's specific version metadata.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <returns>No body with status 200 Ok or 404 Not Found</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <returns>No body with status 200 Ok or 404 Not Found.</returns>
         [HttpHead("{id:long}/{versionId}")]
         [ResponseCache(Duration = 120)]
         [ProducesResponseType(200)]
@@ -222,11 +221,11 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get object's specific version
+        /// Get object's specific version.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="versionId">Object version</param>
-        /// <returns>Object descriptor</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="versionId">Object version.</param>
+        /// <returns>Object descriptor.</returns>
         [HttpGet("{id:long}/{versionId}")]
         [ResponseCache(Duration = 120)]
         [ProducesResponseType(typeof(object), 200)]
@@ -262,15 +261,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Create new object
+        /// Create new object.
         /// </summary>
-        /// <param name="id">Object identifier</param>
-        /// <param name="apiVersion">API version</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="objectDescriptor">JSON with object descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Object identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="objectDescriptor">JSON with object descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [HttpPost("{id:long}")]
         [ProducesResponseType(201)]
         [ProducesResponseType(typeof(string), 400)]
@@ -323,7 +322,7 @@ namespace NuClear.VStore.Host.Controllers
             {
                 return Locked("Simultaneous creation of object with the same id");
             }
-            catch (ArgumentException ex)
+            catch (InputDataValidationException ex)
             {
                 return BadRequest(ex.Message);
             }
@@ -407,7 +406,7 @@ namespace NuClear.VStore.Host.Controllers
             {
                 return PreconditionFailed();
             }
-            catch (ArgumentException ex)
+            catch (InputDataValidationException ex)
             {
                 return BadRequest(ex.Message);
             }
@@ -514,6 +513,10 @@ namespace NuClear.VStore.Host.Controllers
             catch (ConcurrencyException)
             {
                 return PreconditionFailed();
+            }
+            catch (InputDataValidationException ex)
+            {
+                return BadRequest(ex.Message);
             }
             catch (ObjectInconsistentException ex)
             {

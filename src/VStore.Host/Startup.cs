@@ -29,6 +29,7 @@ using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
 
+using NuClear.VStore.Configuration;
 using NuClear.VStore.Host.Options;
 using NuClear.VStore.Http;
 using NuClear.VStore.Http.Core.Json;
@@ -38,6 +39,7 @@ using NuClear.VStore.Http.Core.Swashbuckle;
 using NuClear.VStore.Json;
 using NuClear.VStore.Kafka;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Objects;
 using NuClear.VStore.Options;
 using NuClear.VStore.Prometheus;
@@ -176,6 +178,8 @@ namespace NuClear.VStore.Host
                         options.OperationFilter<UploadFileOperationFilter>();
                         options.IncludeXmlComments(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{nameof(VStore)}.{nameof(Host)}.xml"));
                     });
+
+            services.AddPgContext<VStoreContext>(_configuration, "VersionedStorage");
         }
 
         public void ConfigureContainer(ContainerBuilder builder)
@@ -264,34 +268,22 @@ namespace NuClear.VStore.Host
                     .SingleInstance();
             builder.RegisterType<DistributedLockManager>().SingleInstance();
             builder.RegisterType<SessionStorageReader>().SingleInstance();
-            builder.RegisterType<SessionManagementService>().SingleInstance();
+            builder.RegisterType<SessionManagementService>().InstancePerDependency();
             builder.RegisterType<TemplatesStorageReader>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<ITemplatesStorageReader>()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<TemplatesManagementService>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<ITemplatesManagementService>()
                    .PreserveExistingDefaults()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<ObjectsStorageReader>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<IObjectsStorageReader>()
                    .PreserveExistingDefaults()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<ObjectsManagementService>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<IObjectsManagementService>()
                    .PreserveExistingDefaults()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<EventSender>().As<IEventSender>().SingleInstance();
             builder.RegisterType<MetricsProvider>().SingleInstance();
             builder.RegisterType<FetchClient>().As<IFetchClient>().SingleInstance();

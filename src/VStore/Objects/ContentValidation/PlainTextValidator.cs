@@ -11,7 +11,7 @@ namespace NuClear.VStore.Objects.ContentValidation
     public static class PlainTextValidator
     {
         private static readonly Func<IObjectElementValue, string> TextValueExtractor =
-            value => value is FasElementValue ? ((FasElementValue)value).Text : ((TextElementValue)value).Raw;
+            value => value is FasElementValue fasElementValue ? fasElementValue.Text : ((TextElementValue)value).Raw;
 
         public static IEnumerable<ObjectElementValidationError> CheckLength(IObjectElementValue value, IElementConstraints elementConstraints)
         {

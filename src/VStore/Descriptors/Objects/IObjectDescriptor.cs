@@ -6,6 +6,8 @@ namespace NuClear.VStore.Descriptors.Objects
 {
     public interface IObjectDescriptor : IObjectPersistenceDescriptor
     {
+        long TemplateId { get; set; }
+        string TemplateVersionId { get; set; }
         IReadOnlyCollection<IObjectElementDescriptor> Elements { get; set; }
     }
 }

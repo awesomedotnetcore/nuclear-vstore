@@ -1,15 +1,11 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
+using System.Data;
 using System.Linq;
-using System.Net;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-using Amazon.S3;
-using Amazon.S3.Model;
+using Microsoft.EntityFrameworkCore;
 
 using Newtonsoft.Json;
 
@@ -20,97 +16,105 @@ using NuClear.VStore.Descriptors.Objects.Persistence;
 using NuClear.VStore.Descriptors.Templates;
 using NuClear.VStore.Json;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Options;
 using NuClear.VStore.S3;
 using NuClear.VStore.Templates;
+
+using Object = NuClear.VStore.Models.Object;
 
 namespace NuClear.VStore.Objects
 {
     public sealed class ObjectsStorageReader : IObjectsStorageReader
     {
+        private const int BatchCount = 1000;
+
+        private readonly VStoreContext _context;
         private readonly CdnOptions _cdnOptions;
-        private readonly IS3Client _s3Client;
         private readonly ITemplatesStorageReader _templatesStorageReader;
         private readonly DistributedLockManager _distributedLockManager;
-        private readonly string _bucketName;
-        private readonly int _degreeOfParallelism;
 
         public ObjectsStorageReader(
-            CephOptions cephOptions,
+            VStoreContext context,
             CdnOptions cdnOptions,
-            IS3Client s3Client,
             ITemplatesStorageReader templatesStorageReader,
             DistributedLockManager distributedLockManager)
         {
+            _context = context;
             _cdnOptions = cdnOptions;
-            _s3Client = s3Client;
             _templatesStorageReader = templatesStorageReader;
             _distributedLockManager = distributedLockManager;
-            _bucketName = cephOptions.ObjectsBucketName;
-            _degreeOfParallelism = cephOptions.DegreeOfParallelism;
         }
 
         public async Task<ContinuationContainer<IdentifyableObjectRecord<long>>> List(string continuationToken)
         {
-            var listResponse = await _s3Client.ListObjectsAsync(new ListObjectsRequest { BucketName = _bucketName, Marker = continuationToken });
+            var listResponse = _context.Objects.AsNoTracking();
+            if (long.TryParse(continuationToken, out var parsedContinuationToken))
+            {
+                listResponse = listResponse.Where(x => x.Id > parsedContinuationToken);
+            }
 
-            var records = listResponse.S3Objects.Select(x => new IdentifyableObjectRecord<long>(x.Key.AsRootObjectId(), x.LastModified)).Distinct().ToList();
-            return new ContinuationContainer<IdentifyableObjectRecord<long>>(records, listResponse.NextMarker);
+            IReadOnlyList<long> identifiers;
+            IReadOnlyDictionary<long, DateTime> lastVersions;
+            using (await _context.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted))
+            {
+                identifiers = await listResponse.Select(x => x.Id)
+                                                .Distinct()
+                                                .OrderBy(x => x)
+                                                .Take(BatchCount)
+                                                .ToListAsync();
+
+                var versions = await _context.Objects
+                                             .AsNoTracking()
+                                             .Where(x => identifiers.Contains(x.Id))
+                                             .Select(x => new { x.Id, x.VersionIndex, x.LastModified })
+                                             .ToListAsync();
+
+                lastVersions = versions.GroupBy(x => x.Id, (id, g) => g.OrderByDescending(x => x.VersionIndex).First())
+                                       .ToDictionary(x => x.Id, x => DateTime.SpecifyKind(x.LastModified, DateTimeKind.Utc));
+            }
+
+            var nextMarker = identifiers.Count > 0 ? identifiers[identifiers.Count - 1].ToString() : continuationToken;
+            var records = identifiers.Select(x => new IdentifyableObjectRecord<long>(x, lastVersions[x]))
+                                     .ToList();
+
+            return new ContinuationContainer<IdentifyableObjectRecord<long>>(records, nextMarker);
         }
 
-        public async Task<IReadOnlyCollection<ObjectMetadataRecord>> GetObjectMetadatas(IReadOnlyCollection<long> ids)
+        public async Task<IReadOnlyCollection<ObjectMetadataRecord>> GetObjectsMetadata(IReadOnlyCollection<long> ids)
         {
             var uniqueIds = new HashSet<long>(ids);
-            var partitioner = Partitioner.Create(uniqueIds);
-            var result = new ObjectMetadataRecord[uniqueIds.Count];
-            var tasks = partitioner
-                .GetOrderablePartitions(_degreeOfParallelism)
-                .Select(async x =>
-                            {
-                                while (x.MoveNext())
-                                {
-                                    var id = x.Current.Value;
-                                    ObjectMetadataRecord record;
-                                    try
-                                    {
-                                        var objectLatestVersion = await GetObjectLatestVersion(id);
-                                        var versionId = objectLatestVersion?.VersionId;
-                                        if (versionId == null)
-                                        {
-                                            record = null;
-                                        }
-                                        else
-                                        {
-                                            var response = await _s3Client.GetObjectMetadataAsync(_bucketName, id.AsS3ObjectKey(Tokens.ObjectPostfix), versionId);
-                                            var metadataWrapper = MetadataCollectionWrapper.For(response.Metadata);
-                                            var author = metadataWrapper.Read<string>(MetadataElement.Author);
-                                            var authorLogin = metadataWrapper.Read<string>(MetadataElement.AuthorLogin);
-                                            var authorName = metadataWrapper.Read<string>(MetadataElement.AuthorName);
+            var versions = await _context.Objects
+                                         .AsNoTracking()
+                                         .Where(x => uniqueIds.Contains(x.Id))
+                                         .ToListAsync();
 
-                                            record = new ObjectMetadataRecord(
-                                                id,
-                                                versionId,
-                                                response.LastModified,
-                                                new AuthorInfo(author, authorLogin, authorName));
-                                        }
-                                    }
-                                    catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-                                    {
-                                        record = null;
-                                    }
+            var lastVersions = versions.GroupBy(x => x.Id, (id, g) => g.OrderByDescending(x => x.VersionIndex).First());
 
-                                    result[x.Current.Key] = record;
-                                }
-                            });
-            await Task.WhenAll(tasks);
-            return result.Where(x => x != null).ToList();
+            var result = lastVersions.Select(x => new ObjectMetadataRecord(
+                                                 x.Id,
+                                                 x.VersionId,
+                                                 DateTime.SpecifyKind(x.LastModified, DateTimeKind.Utc),
+                                                 new AuthorInfo(x.Author, x.AuthorLogin, x.AuthorName)))
+                                     .ToList();
+
+            return result;
         }
 
         public async Task<IVersionedTemplateDescriptor> GetTemplateDescriptor(long id, string versionId)
         {
-            var (persistenceDescriptor, _, _, _) =
-                await GetObjectFromS3<ObjectPersistenceDescriptor>(id.AsS3ObjectKey(Tokens.ObjectPostfix), versionId, default);
-            return await _templatesStorageReader.GetTemplateDescriptor(persistenceDescriptor.TemplateId, persistenceDescriptor.TemplateVersionId);
+            var entity = await _context.Objects
+                                       .AsNoTracking()
+                                       .Where(x => x.Id == id && x.VersionId == versionId)
+                                       .Select(x => new { x.TemplateId, x.TemplateVersionId })
+                                       .FirstOrDefaultAsync();
+
+            if (entity == null)
+            {
+                throw new ObjectNotFoundException($"Object '{id}' with versionId '{versionId}' not found.");
+            }
+
+            return await _templatesStorageReader.GetTemplateDescriptor(entity.TemplateId, entity.TemplateVersionId);
         }
 
         public async Task<IReadOnlyCollection<ObjectVersionRecord>> GetObjectVersions(long id, string initialVersionId) =>
@@ -120,51 +124,37 @@ namespace NuClear.VStore.Objects
             await GetObjectVersions(id, initialVersionId, false);
 
         /// <inheritdoc />
-        public async Task<VersionedObjectDescriptor<string>> GetObjectLatestVersion(long id)
-        {
-            var versionsResponse = await _s3Client.ListVersionsAsync(_bucketName, id.AsS3ObjectKey(Tokens.ObjectPostfix));
-            return versionsResponse.Versions
-                                   .Where(x => !x.IsDeleteMarker && x.IsLatest)
-                                   .Select(x => new VersionedObjectDescriptor<string>(x.Key, x.VersionId, x.LastModified))
-                                   .SingleOrDefault();
-        }
-
-        public async Task<IReadOnlyCollection<VersionedObjectDescriptor<string>>> GetObjectElementsLatestVersions(long id)
-        {
-            var versionsResponse = await _s3Client.ListVersionsAsync(_bucketName, id.ToString() + "/");
-            return versionsResponse.Versions
-                                   .Where(x => !x.IsDeleteMarker && x.IsLatest && !x.Key.EndsWith("/") && !x.Key.EndsWith(Tokens.ObjectPostfix))
-                                   .Select(x => new VersionedObjectDescriptor<string>(x.Key, x.VersionId, x.LastModified))
-                                   .ToList();
-        }
+        public async Task<VersionedObjectDescriptor<long>> GetObjectLatestVersion(long id)
+            => await _context.Objects
+                             .AsNoTracking()
+                             .Where(x => x.Id == id)
+                             .OrderByDescending(x => x.VersionIndex)
+                             .Select(x => new VersionedObjectDescriptor<long>(x.Id, x.VersionId, DateTime.SpecifyKind(x.LastModified, DateTimeKind.Utc)))
+                             .FirstOrDefaultAsync();
 
         public async Task<ObjectDescriptor> GetObjectDescriptor(long id, string versionId, CancellationToken cancellationToken) =>
             await GetObjectDescriptor(id, versionId, cancellationToken, true);
 
         public async Task<bool> IsObjectExists(long id)
-        {
-            var listResponse = await _s3Client.ListObjectsV2Async(
-                                   new ListObjectsV2Request
-                                   {
-                                       BucketName = _bucketName,
-                                       MaxKeys = 1,
-                                       Prefix = $"{id}/{Tokens.ObjectPostfix}"
-                                   });
-            return listResponse.S3Objects.Count != 0;
-        }
+            => await _context.Objects
+                             .AsNoTracking()
+                             .AnyAsync(x => x.Id == id);
 
         /// <inheritdoc />
         public async Task<DateTime> GetObjectVersionLastModified(long id, string versionId)
         {
-            try
-            {
-                var response = await _s3Client.GetObjectMetadataAsync(_bucketName, id.AsS3ObjectKey(Tokens.ObjectPostfix), versionId);
-                return response.LastModified;
-            }
-            catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            var entity = await _context.Objects
+                                       .AsNoTracking()
+                                       .Where(x => x.Id == id && x.VersionId == versionId)
+                                       .Select(x => new { x.Id, x.VersionId, x.LastModified })
+                                       .FirstOrDefaultAsync();
+
+            if (entity == null)
             {
                 throw new ObjectNotFoundException($"Object '{id}' with versionId '{versionId}' not found.");
             }
+
+            return DateTime.SpecifyKind(entity.LastModified, DateTimeKind.Utc);
         }
 
         /// <inheritdoc/>
@@ -188,196 +178,123 @@ namespace NuClear.VStore.Objects
 
         private async Task<IReadOnlyCollection<ObjectVersionRecord>> GetObjectVersions(long id, string initialVersionId, bool fetchElements)
         {
-            var objectDescriptors = new List<ObjectDescriptor>();
+            await _distributedLockManager.EnsureLockNotExistsAsync(id);
+            var query = _context.Objects
+                                .AsNoTracking()
+                                .Where(x => x.Id == id)
+                                .OrderByDescending(x => x.VersionIndex)
+                                .AsQueryable();
 
-            async Task<(bool IsTruncated, int NextVersionIndex, string NextVersionIdMarker)> ListVersions(int nextVersionIndex, string nextVersionIdMarker)
+            if (fetchElements)
             {
-                await _distributedLockManager.EnsureLockNotExistsAsync(id);
-
-                var response = await _s3Client.ListVersionsAsync(
-                                   new ListVersionsRequest
-                                       {
-                                           BucketName = _bucketName,
-                                           Prefix = id.AsS3ObjectKey(Tokens.ObjectPostfix),
-                                           VersionIdMarker = nextVersionIdMarker
-                                       });
-
-                var nonDeletedVersions = response.Versions.FindAll(x => !x.IsDeleteMarker);
-                nextVersionIndex += nonDeletedVersions.Count;
-
-                var initialVersionIdReached = false;
-                var versionInfos = nonDeletedVersions
-                    .Aggregate(
-                        new List<(string VersionId, DateTime LastModified)>(),
-                        (list, next) =>
-                            {
-                                initialVersionIdReached = initialVersionIdReached ||
-                                                          (!string.IsNullOrEmpty(initialVersionId) &&
-                                                           initialVersionId.Equals(next.VersionId, StringComparison.OrdinalIgnoreCase));
-
-                                if (!initialVersionIdReached)
-                                {
-                                    list.Add((next.VersionId, next.LastModified));
-                                }
-
-                                return list;
-                            });
-
-                var descriptors = new ObjectDescriptor[versionInfos.Count];
-                var partitioner = Partitioner.Create(versionInfos);
-                var tasks = partitioner.GetOrderablePartitions(_degreeOfParallelism)
-                                       .Select(async partition =>
-                                                   {
-                                                       while (partition.MoveNext())
-                                                       {
-                                                           var index = partition.Current.Key;
-                                                           var versionInfo = partition.Current.Value;
-
-                                                           descriptors[index] = await GetObjectDescriptor(id, versionInfo.VersionId, CancellationToken.None, fetchElements);
-                                                       }
-                                                   });
-                await Task.WhenAll(tasks);
-
-                objectDescriptors.AddRange(descriptors);
-
-                return (!initialVersionIdReached && response.IsTruncated, nextVersionIndex, response.NextVersionIdMarker);
+                query = query.Include(x => x.ElementLinks)
+                             .ThenInclude(x => x.Element);
             }
 
-            var result = await ListVersions(0, null);
-            if (objectDescriptors.Count == 0)
-            {
-                if (!await IsObjectExists(id))
-                {
-                    throw new ObjectNotFoundException($"Object '{id}' not found.");
-                }
+            var allVersions = await query.ToListAsync();
 
-                return Array.Empty<ObjectVersionRecord>();
+            if (allVersions.Count == 0)
+            {
+                throw new ObjectNotFoundException($"Object '{id}' not found.");
             }
 
-            while (result.IsTruncated)
+            var versions = allVersions.TakeWhile(x => x.VersionId != initialVersionId);
+            var records = new List<ObjectVersionRecord>(allVersions.Count);
+            foreach (var version in versions)
             {
-                result = await ListVersions(result.NextVersionIndex, result.NextVersionIdMarker);
-            }
-
-            var maxVersionIndex = result.NextVersionIndex;
-            var records = new ObjectVersionRecord[objectDescriptors.Count];
-            for (var index = 0; index < objectDescriptors.Count; ++index)
-            {
-                var descriptor = objectDescriptors[index];
-                records[index] = new ObjectVersionRecord(
-                    descriptor.Id,
-                    descriptor.VersionId,
-                    --maxVersionIndex,
-                    descriptor.TemplateId,
-                    descriptor.TemplateVersionId,
-                    descriptor.LastModified,
-                    new AuthorInfo(descriptor.Metadata.Author, descriptor.Metadata.AuthorLogin, descriptor.Metadata.AuthorName),
+                var elements = fetchElements ? version.ElementLinks.Select(x => x.Element) : Array.Empty<ObjectElement>();
+                var descriptor = GetObjectDescriptorFromEntity(version, elements);
+                records.Add(new ObjectVersionRecord(
+                    version.Id,
+                    version.VersionId,
+                    version.VersionIndex,
+                    version.TemplateId,
+                    version.TemplateVersionId,
+                    DateTime.SpecifyKind(version.LastModified, DateTimeKind.Utc),
+                    new AuthorInfo(version.Author, version.AuthorLogin, version.AuthorName),
                     descriptor.Properties,
-                    descriptor.Elements.Select(x => new ObjectVersionRecord.ElementRecord(x.TemplateCode, x.Value)).ToList(),
-                    descriptor.Metadata.ModifiedElements);
+                    descriptor.Elements
+                              .Select(x => new ObjectVersionRecord.ElementRecord(x.TemplateCode, x.Value))
+                              .ToList(),
+                    version.ModifiedElements));
             }
 
             return records;
         }
 
-        private async Task<ObjectDescriptor> GetObjectDescriptor(long id, string versionId, CancellationToken cancellationToken, bool fetchElements)
+        private ObjectDescriptor GetObjectDescriptorFromEntity(Object entity, IEnumerable<ObjectElement> elements, bool setCdnUris = false)
         {
-            string objectVersionId;
-            if (string.IsNullOrEmpty(versionId))
-            {
-                var objectLatestVersion = await GetObjectLatestVersion(id);
-                objectVersionId = objectLatestVersion?.VersionId;
-
-                if (objectVersionId == null)
-                {
-                    throw new ObjectNotFoundException($"Object '{id}' not found.");
-                }
-            }
-            else
-            {
-                objectVersionId = versionId;
-            }
-
-            var (persistenceDescriptor, objectAuthorInfo, objectLastModified, modifiedElements) =
-                await GetObjectFromS3<ObjectPersistenceDescriptor>(id.AsS3ObjectKey(Tokens.ObjectPostfix), objectVersionId, cancellationToken);
-
-            var elements = Array.Empty<ObjectElementDescriptor>();
-            if (fetchElements)
-            {
-                var tasks =
-                    persistenceDescriptor.Elements
-                                         .Select(async x =>
-                                                     {
-                                                         var (elementPersistenceDescriptor, _, elementLastModified, _) =
-                                                             await GetObjectFromS3<ObjectElementPersistenceDescriptor>(x.Id, x.VersionId, cancellationToken);
-
-                                                         SetCdnUris(id, objectVersionId, elementPersistenceDescriptor);
-                                                         return new ObjectElementDescriptor
-                                                             {
-                                                                 Id = x.Id.AsSubObjectId(),
-                                                                 VersionId = x.VersionId,
-                                                                 LastModified = elementLastModified,
-                                                                 Type = elementPersistenceDescriptor.Type,
-                                                                 TemplateCode = elementPersistenceDescriptor.TemplateCode,
-                                                                 Properties = elementPersistenceDescriptor.Properties,
-                                                                 Constraints = elementPersistenceDescriptor.Constraints,
-                                                                 Value = elementPersistenceDescriptor.Value
-                                                             };
-                                                     })
-                                         .ToList();
-
-                elements = await Task.WhenAll(tasks);
-            }
-
+            var persistenceDescriptor = JsonConvert.DeserializeObject<ObjectPersistenceDescriptor>(entity.Data, SerializerSettings.Default);
             var descriptor = new ObjectDescriptor
-                                 {
-                                     Id = id,
-                                     VersionId = objectVersionId,
-                                     LastModified = objectLastModified,
-                                     TemplateId = persistenceDescriptor.TemplateId,
-                                     TemplateVersionId = persistenceDescriptor.TemplateVersionId,
-                                     Language = persistenceDescriptor.Language,
-                                     Properties = persistenceDescriptor.Properties,
-                                     Elements = elements,
-                                     Metadata = new ObjectDescriptor.ObjectMetadata
-                                         {
-                                             Author = objectAuthorInfo.Author,
-                                             AuthorLogin = objectAuthorInfo.AuthorLogin,
-                                             AuthorName = objectAuthorInfo.AuthorName,
-                                             ModifiedElements = modifiedElements
-                                         }
-                                 };
+                {
+                    Id = entity.Id,
+                    VersionId = entity.VersionId,
+                    VersionIndex = entity.VersionIndex,
+                    LastModified = DateTime.SpecifyKind(entity.LastModified, DateTimeKind.Utc),
+                    TemplateId = entity.TemplateId,
+                    TemplateVersionId = entity.TemplateVersionId,
+                    Language = persistenceDescriptor.Language,
+                    Properties = persistenceDescriptor.Properties,
+                    Elements = elements.Select(x => GetObjectElementDescriptorFromEntity(entity.Id, entity.VersionId, x, setCdnUris)).ToList(),
+                    Metadata = new ObjectDescriptor.ObjectMetadata
+                        {
+                            Author = entity.Author,
+                            AuthorLogin = entity.AuthorLogin,
+                            AuthorName = entity.AuthorName,
+                            ModifiedElements = entity.ModifiedElements
+                        }
+                };
+
             return descriptor;
         }
 
-        private async Task<(T, AuthorInfo, DateTime, IReadOnlyCollection<int>)> GetObjectFromS3<T>(string key, string versionId, CancellationToken cancellationToken)
+        private ObjectElementDescriptor GetObjectElementDescriptorFromEntity(long objectId, string objectVersionId, ObjectElement entity, bool setCdnUris)
         {
-            try
+            var descriptor = JsonConvert.DeserializeObject<ObjectElementPersistenceDescriptor>(entity.Data, SerializerSettings.Default);
+            if (setCdnUris)
             {
-                using (var getObjectResponse = await _s3Client.GetObjectAsync(_bucketName, key, versionId, cancellationToken))
-                {
-                    var metadataWrapper = MetadataCollectionWrapper.For(getObjectResponse.Metadata);
-                    var author = metadataWrapper.Read<string>(MetadataElement.Author);
-                    var authorLogin = metadataWrapper.Read<string>(MetadataElement.AuthorLogin);
-                    var authorName = metadataWrapper.Read<string>(MetadataElement.AuthorName);
-                    var modifiedElements = metadataWrapper.Read<string>(MetadataElement.ModifiedElements);
-                    var modifiedElementIds = string.IsNullOrEmpty(modifiedElements)
-                                                 ? (IReadOnlyCollection<int>)Array.Empty<int>()
-                                                 : modifiedElements.Split(Tokens.ModifiedElementsDelimiter).Select(int.Parse).ToList();
-                    string content;
-                    using (var reader = new StreamReader(getObjectResponse.ResponseStream, Encoding.UTF8))
-                    {
-                        content = reader.ReadToEnd();
-                    }
+                SetCdnUris(objectId, objectVersionId, descriptor);
+            }
 
-                    var obj = JsonConvert.DeserializeObject<T>(content, SerializerSettings.Default);
-                    return (obj, new AuthorInfo(author, authorLogin, authorName), getObjectResponse.LastModified, modifiedElementIds);
-                }
-            }
-            catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            return new ObjectElementDescriptor
+                {
+                    Id = entity.Id,
+                    VersionId = entity.VersionId,
+                    LastModified = DateTime.SpecifyKind(entity.LastModified, DateTimeKind.Utc),
+                    Constraints = descriptor.Constraints,
+                    Properties = descriptor.Properties,
+                    TemplateCode = descriptor.TemplateCode,
+                    Type = descriptor.Type,
+                    Value = descriptor.Value
+                };
+        }
+
+        private async Task<ObjectDescriptor> GetObjectDescriptor(long id, string versionId, CancellationToken cancellationToken, bool fetchElements)
+        {
+            var query = _context.Objects
+                                .AsNoTracking()
+                                .Where(x => x.Id == id);
+
+            query = string.IsNullOrEmpty(versionId)
+                        ? query.OrderByDescending(x => x.VersionIndex)
+                        : query.Where(x => x.VersionId == versionId);
+
+            if (fetchElements)
             {
-                throw new ObjectNotFoundException($"Object '{key}' with versionId '{versionId}' not found.");
+                query = query.Include(x => x.ElementLinks)
+                             .ThenInclude(x => x.Element);
             }
+
+            var entity = await query.FirstOrDefaultAsync(cancellationToken);
+            if (entity == null)
+            {
+                throw new ObjectNotFoundException($"Object '{id}' not found.");
+            }
+
+            var elements = fetchElements ? entity.ElementLinks.Select(x => x.Element) : Array.Empty<ObjectElement>();
+            var descriptor = GetObjectDescriptorFromEntity(entity, elements, true);
+
+            return descriptor;
         }
 
         private void SetCdnUris(long id, string versionId, IObjectElementPersistenceDescriptor objectElementDescriptor)

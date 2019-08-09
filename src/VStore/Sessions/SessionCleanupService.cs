@@ -53,7 +53,7 @@ namespace NuClear.VStore.Sessions
             var s3Objects = listResponse.S3Objects.OrderByDescending(x => x.Size).ToList();
             foreach (var obj in s3Objects)
             {
-                var getMetadataRespose = await _cephS3Client.GetObjectMetadataAsync(_filesBucketName, obj.Key);
+                var getMetadataResponse = await _cephS3Client.GetObjectMetadataAsync(_filesBucketName, obj.Key);
                 var archivedFileKey = obj.Key.AsArchivedFileKey(archiveDate);
                 var copyRequest = new CopyObjectRequest
                     {
@@ -64,9 +64,9 @@ namespace NuClear.VStore.Sessions
                         MetadataDirective = S3MetadataDirective.REPLACE,
                         CannedACL = S3CannedACL.PublicRead
                     };
-                foreach (var metadataKey in getMetadataRespose.Metadata.Keys)
+                foreach (var metadataKey in getMetadataResponse.Metadata.Keys)
                 {
-                    copyRequest.Metadata.Add(metadataKey, getMetadataRespose.Metadata[metadataKey]);
+                    copyRequest.Metadata.Add(metadataKey, getMetadataResponse.Metadata[metadataKey]);
                 }
 
                 await _cephS3Client.CopyObjectAsync(copyRequest);
@@ -83,7 +83,7 @@ namespace NuClear.VStore.Sessions
             return count;
         }
 
-        public async Task<int> DeleteArchievedSessionAsync(Guid sessionId, DateTime archiveDate)
+        public async Task<int> DeleteArchivedSessionAsync(Guid sessionId, DateTime archiveDate)
         {
             var listResponse = await _cephS3Client.ListObjectsAsync(
                                    new ListObjectsRequest
@@ -97,7 +97,7 @@ namespace NuClear.VStore.Sessions
             }
 
             var count = await DeleteSessionFilesAsync(sessionId, listResponse.S3Objects.OrderByDescending(x => x.Size));
-            _logger.LogInformation("Archieved session '{sessionId}' deleted.", sessionId);
+            _logger.LogInformation("Archived session '{sessionId}' deleted.", sessionId);
 
             return count;
         }

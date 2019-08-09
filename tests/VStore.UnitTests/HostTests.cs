@@ -88,7 +88,7 @@ namespace VStore.UnitTests
         [InlineData("2.0", false)]
         public async Task TestGetAvailableElementDescriptors(string version, bool shouldSuccess = true)
         {
-            var unmockedService = new TemplatesManagementService(new UploadFileOptions(), new CephOptions(), null, null, null);
+            var unmockedService = new TemplatesManagementService(null, new UploadFileOptions(), null, null);
             _mockTemplatesManagementService.Reset();
             _mockTemplatesManagementService.Setup(x => x.GetAvailableElementDescriptors())
                                            .Returns(unmockedService.GetAvailableElementDescriptors());
@@ -377,7 +377,6 @@ namespace VStore.UnitTests
         }
 
         [Theory]
-        [InlineData("{ }")]
         [InlineData("{ ; }")]
         [InlineData(@"{ ""elements"": [{""id"": 1,""type"": ""badType!"", ""value"": { } }] }")]
         [InlineData(@"{ ""elements"": [{""id"": 1,""type"": ""article"", ""value"": { } }] }")]

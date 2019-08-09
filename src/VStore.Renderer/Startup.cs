@@ -18,11 +18,13 @@ using Microsoft.Extensions.Options;
 
 using Newtonsoft.Json.Linq;
 
+using NuClear.VStore.Configuration;
 using NuClear.VStore.Http;
 using NuClear.VStore.Http.Core.Middleware;
 using NuClear.VStore.Http.Core.Swashbuckle;
 using NuClear.VStore.ImageRendering;
 using NuClear.VStore.Locks;
+using NuClear.VStore.Models;
 using NuClear.VStore.Objects;
 using NuClear.VStore.Options;
 using NuClear.VStore.Prometheus;
@@ -88,6 +90,8 @@ namespace NuClear.VStore.Renderer
                         options.OperationFilter<ViewFileFilter>();
                         options.IncludeXmlComments(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"{nameof(VStore)}.{nameof(Renderer)}.xml"));
                     });
+
+            services.AddPgContext<VStoreContext>(_configuration, "VersionedStorage");
         }
 
         public void ConfigureContainer(ContainerBuilder builder)
@@ -160,17 +164,11 @@ namespace NuClear.VStore.Renderer
                     .SingleInstance();
             builder.RegisterType<DistributedLockManager>().SingleInstance();
             builder.RegisterType<TemplatesStorageReader>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<ITemplatesStorageReader>()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<ObjectsStorageReader>()
-                   .WithParameter(
-                       (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),
-                       (parameterInfo, context) => context.Resolve<ICephS3Client>())
                    .As<IObjectsStorageReader>()
-                   .SingleInstance();
+                   .InstancePerDependency();
             builder.RegisterType<ImagePreviewService>()
                    .WithParameter(
                        (parameterInfo, context) => parameterInfo.ParameterType == typeof(IS3Client),

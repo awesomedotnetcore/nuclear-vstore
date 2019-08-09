@@ -35,17 +35,18 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get available template element descriptors
+        /// Get available template element descriptors.
         /// </summary>
-        /// <returns>List of template element descriptors</returns>
+        /// <returns>List of template element descriptors.</returns>
         [HttpGet("element-descriptors/available")]
-        public ActionResult<IReadOnlyCollection<IElementDescriptor>> GetAvailableElementDescriptors() => Json(_templatesManagementService.GetAvailableElementDescriptors());
+        public ActionResult<IReadOnlyCollection<IElementDescriptor>> GetAvailableElementDescriptors()
+            => Json(_templatesManagementService.GetAvailableElementDescriptors());
 
         /// <summary>
-        /// Get all templates
+        /// Get all templates.
         /// </summary>
-        /// <param name="continuationToken">Token to continue reading list, should be empty on initial call</param>
-        /// <returns>List of template descriptors</returns>
+        /// <param name="continuationToken">Token to continue reading list, should be empty on initial call.</param>
+        /// <returns>List of template descriptors.</returns>
         [HttpGet]
         [ProducesResponseType(typeof(IReadOnlyCollection<IdentifyableObjectRecord<long>>), 200)]
         public async Task<IActionResult> List([FromHeader(Name = Http.HeaderNames.AmsContinuationToken)]string continuationToken)
@@ -61,24 +62,24 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get specified templates
+        /// Get specified templates.
         /// </summary>
-        /// <param name="ids">List of template identifiers</param>
-        /// <returns>List of specified template descriptors</returns>
+        /// <param name="ids">List of template identifiers.</param>
+        /// <returns>List of specified template descriptors.</returns>
         [HttpGet("specified")]
         [ProducesResponseType(typeof(IReadOnlyCollection<ObjectMetadataRecord>), 200)]
         public async Task<IActionResult> List([FromQuery]IReadOnlyCollection<long> ids)
         {
-            var records = await _templatesStorageReader.GetTemplateMetadatas(ids);
+            var records = await _templatesStorageReader.GetTemplatesMetadata(ids);
             return Json(records);
         }
 
         /// <summary>
-        /// Get last version of specified template
+        /// Get last version of specified template.
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="ifNoneMatch">Version of template to check if it has been modified (optional)</param>
-        /// <returns>Template descriptor or 304 Not Modified</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="ifNoneMatch">Version of template to check if it has been modified (optional).</param>
+        /// <returns>Template descriptor or 304 Not Modified.</returns>
         [HttpGet("{id:long}")]
         [ResponseCache(Duration = 120)]
         [ProducesResponseType(typeof(object), 200)]
@@ -118,11 +119,11 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get specific version of template
+        /// Get specific version of template.
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="versionId">Version</param>
-        /// <returns>Template descriptor</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="versionId">Version.</param>
+        /// <returns>Template descriptor.</returns>
         [HttpGet("{id:long}/{versionId}")]
         [ResponseCache(Duration = 120)]
         [ProducesResponseType(typeof(object), 200)]
@@ -155,15 +156,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Get template versions
+        /// Get template versions.
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <returns>List of template versions</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <returns>List of template versions.</returns>
         [MapToApiVersion("1.2")]
         [HttpGet("{id:long}/versions")]
         [ProducesResponseType(typeof(IReadOnlyCollection<TemplateVersionRecord>), 200)]
         [ProducesResponseType(404)]
-        public async Task<IActionResult> GetVersions(long id)
+        public async Task<ActionResult<IReadOnlyCollection<TemplateVersionRecord>>> GetVersions(long id)
         {
             try
             {
@@ -177,10 +178,10 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Validate template elements (old API)
+        /// Validate template elements (old API).
         /// </summary>
-        /// <param name="elementDescriptors">Template element descriptors to validate</param>
-        /// <returns>Validation errors or 200 Ok</returns>
+        /// <param name="elementDescriptors">Template element descriptors to validate.</param>
+        /// <returns>Validation errors or 200 Ok.</returns>
         [Obsolete, MapToApiVersion("1.0")]
         [HttpPost("validate-elements")]
         [ProducesResponseType(200)]
@@ -199,10 +200,10 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Validate template elements
+        /// Validate template elements.
         /// </summary>
-        /// <param name="elementDescriptors">Template element descriptors to validate</param>
-        /// <returns>Validation errors or 200 Ok</returns>
+        /// <param name="elementDescriptors">Template element descriptors to validate.</param>
+        /// <returns>Validation errors or 200 Ok.</returns>
         [MapToApiVersion("1.1")]
         [MapToApiVersion("1.2")]
         [HttpPost("validate-elements")]
@@ -222,15 +223,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Create new template (old API)
+        /// Create new template (old API).
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="apiVersion">API version</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="templateDescriptor">JSON with template descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="templateDescriptor">JSON with template descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [Obsolete, MapToApiVersion("1.0")]
         [HttpPost("{id:long}")]
         [ProducesResponseType(201)]
@@ -250,15 +251,15 @@ namespace NuClear.VStore.Host.Controllers
         }
 
         /// <summary>
-        /// Create new template
+        /// Create new template.
         /// </summary>
-        /// <param name="id">Template identifier</param>
-        /// <param name="apiVersion">API version</param>
-        /// <param name="author">Author identifier</param>
-        /// <param name="authorLogin">Author login</param>
-        /// <param name="authorName">Author name</param>
-        /// <param name="templateDescriptor">JSON with template descriptor</param>
-        /// <returns>HTTP code</returns>
+        /// <param name="id">Template identifier.</param>
+        /// <param name="apiVersion">API version.</param>
+        /// <param name="author">Author identifier.</param>
+        /// <param name="authorLogin">Author login.</param>
+        /// <param name="authorName">Author name.</param>
+        /// <param name="templateDescriptor">JSON with template descriptor.</param>
+        /// <returns>HTTP code.</returns>
         [MapToApiVersion("1.1")]
         [MapToApiVersion("1.2")]
         [HttpPost("{id:long}")]
@@ -374,7 +375,7 @@ namespace NuClear.VStore.Host.Controllers
                 var versionId = await _templatesManagementService.CreateTemplate(id, new AuthorInfo(author, authorLogin, authorName), templateDescriptor);
 
                 Response.Headers[HeaderNames.ETag] = $"\"{versionId}\"";
-                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { nameof(versionId), versionId } };
+                var routeValues = new Dictionary<string, string> { ["api-version"] = apiVersion.ToString(), [nameof(id)] = id.ToString(), [nameof(versionId)] = versionId };
                 return CreatedAtAction(nameof(GetVersion), routeValues, null);
             }
             catch (ObjectAlreadyExistsException)
@@ -388,6 +389,10 @@ namespace NuClear.VStore.Host.Controllers
             catch (TemplateValidationException ex)
             {
                 return Unprocessable(errorGenerator(ex));
+            }
+            catch (InputDataValidationException ex)
+            {
+                return BadRequest(ex.Message);
             }
         }
 
@@ -420,16 +425,16 @@ namespace NuClear.VStore.Host.Controllers
 
             try
             {
-                var latestVersionId = await _templatesManagementService.ModifyTemplate(
-                                          id,
-                                          ifMatch.Trim('"'),
-                                          new AuthorInfo(author, authorLogin, authorName),
-                                          templateDescriptor);
+                var versionId = await _templatesManagementService.ModifyTemplate(
+                                    id,
+                                    ifMatch.Trim('"'),
+                                    new AuthorInfo(author, authorLogin, authorName),
+                                    templateDescriptor);
 
-                var routeValues = new Dictionary<string, string> { { "api-version", apiVersion.ToString() }, { nameof(id), id.ToString() }, { "versionId", latestVersionId } };
+                var routeValues = new Dictionary<string, string> { ["api-version"] = apiVersion.ToString(), [nameof(id)] = id.ToString(), [nameof(versionId)] = versionId };
                 var url = Url.AbsoluteAction("GetVersion", "Templates", routeValues);
 
-                Response.Headers[HeaderNames.ETag] = $"\"{latestVersionId}\"";
+                Response.Headers[HeaderNames.ETag] = $"\"{versionId}\"";
                 return NoContent(url);
             }
             catch (ObjectNotFoundException)
@@ -447,6 +452,10 @@ namespace NuClear.VStore.Host.Controllers
             catch (ConcurrencyException)
             {
                 return PreconditionFailed();
+            }
+            catch (InputDataValidationException ex)
+            {
+                return BadRequest(ex.Message);
             }
         }
     }

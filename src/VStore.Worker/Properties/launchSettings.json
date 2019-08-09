@@ -1,8 +1,15 @@
 {
   "profiles": {
-    "VStore.Worker": {
+    "VStore.Worker (collect)": {
       "commandName": "Project",
       "commandLineArgs": "collect binaries batchsize=200 delay=00:00:05",
+      "environmentVariables": {
+        "VSTORE_ENVIRONMENT": "Development"
+      }
+    },
+    "VStore.Worker (produce)": {
+      "commandName": "Project",
+      "commandLineArgs": "produce events mode=binaries,versions",
       "environmentVariables": {
         "VSTORE_ENVIRONMENT": "Development"
       }

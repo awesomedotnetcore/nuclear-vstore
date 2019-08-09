@@ -42,19 +42,6 @@ build:renderer:
     paths:
       - publish/vstore-renderer/
 
-build:cloning-tool:
-  image: $REGISTRY/dotnet/core/sdk:2.2.300-alpine3.9
-  stage: build
-  when: manual
-  script:
-    - dotnet publish src/CloningTool --configuration Release --runtime alpine.3.9-x64 --output ../../publish/cloning-tool
-  tags: [ 2gis, docker ]
-  artifacts:
-    name: "${CI_COMMIT_REF_NAME}_cloning_tool"
-    expire_in: '1 week'
-    paths:
-      - publish/cloning-tool/
-
 build:vstore-host-image:
   stage: dockerize
   when: manual
@@ -91,17 +78,6 @@ build:vstore-renderer-image:
   dependencies:
     - build:renderer
 
-build:cloning-tool-image:
-  stage: dockerize
-  when: manual
-  script:
-    - export IMAGE_TAG=$REGISTRY/ams/cloning-tool:${CI_TAG}
-    - docker build --pull --rm --tag $IMAGE_TAG -f publish/cloning-tool/Dockerfile publish/cloning-tool
-    - docker push $IMAGE_TAG
-  tags: [ docker-engine, io ]
-  dependencies:
-    - build:cloning-tool
-
 # ================ Deploy =================
 
 deploy:standalone:
@@ -110,7 +86,7 @@ deploy:standalone:
   image: $REGISTRY/2gis-io/k8s-handle:latest
   script:
     - export VSTORE_ENVIRONMENT=Stage
-    - k8s-handle deploy --config config-standalone.yaml --section vstore --sync-mode True
+    - k8s-handle deploy --config config-standalone.yaml --section vstore --sync-mode
   only:
     - tags
   dependencies: []
@@ -189,6 +165,5 @@ cleanup:registry:
     - hub-tool tags:cleanup --regexp "$TAG_MASK*" --days $IMAGE_LIFE_TIME_DAYS --path ams/vstore
     - hub-tool tags:cleanup --regexp "$TAG_MASK*" --days $IMAGE_LIFE_TIME_DAYS --path ams/vstore-worker
     - hub-tool tags:cleanup --regexp "$TAG_MASK*" --days $IMAGE_LIFE_TIME_DAYS --path ams/vstore-renderer
-    - hub-tool tags:cleanup --regexp "$TAG_MASK*" --days $IMAGE_LIFE_TIME_DAYS --path ams/cloning-tool
   dependencies: []
   tags: [ docker-engine, io ]
